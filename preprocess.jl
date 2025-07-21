@@ -1,36 +1,20 @@
 
 
+include("const.jl")
 include("utils.jl")
-
-
-um_path = raw"C:\Users\haeso\Documents\project\Binance_Futures_Download\binance-vision-data\futures\um"
-symbol = "BTCUSDT"
-dtype = "premiumIndexKlines"
-
-
-file_list_pi = get_file_list(um_path, symbol, dtype)
-df_pi = read_zip_to_df(file_list_pi[1])
+include("setup.jl")
 
 
 
-dtype = "aggTrades"
-file_list_aggTr = get_file_list(um_path, symbol, dtype)
-df_aggTr = read_zip_to_df(file_list_aggTr[1])
-
-
-
-dtype = "fundingRate"
-file_list_fdr = get_file_list(um_path, symbol, dtype)
-df_fdr = read_zip_to_df(file_list_fdr[1])
+df_pi = read_zip_to_df(file_list_pi[1], col_names=col_names_pi)
+df_aggTr = read_zip_to_df(file_list_aggTr[1], col_names=col_names_aggTr)
+df_fdr = read_zip_to_df(file_list_fdr[1], col_names=col_names_fdr)
 
 
 
 dts = diff(df_aggTr.transact_time)
 histogram(dts[dts .> 0], xlims=(-30, 1000))
 minimum(dts[dts .> 0])
-
-
-
 
 # timestamp는 ms 단위
 # aggTrades는 모이는대로 찍히고, premiumIndexKlines는 분 단위, fundingRate는 8시간 단위
@@ -40,7 +24,24 @@ minimum(dts[dts .> 0])
 
 df_aggTr.price
 
-df_aggTr
+s = time()
+df_res = get_df_res(df_aggTr)
+e = time()
+println("Processing time: $(round(e - s, digits=2)) sec")
+
+
+
+
+save_dir = raw"C:\Users\haeso\Documents\project\Binance_Futures_Download\binance-vision-data\futures\processed"
+
+
+
+process_one_month(file_list_aggTr[1], symbol, save_dir, interval_sec)
+process_one_month(file_list_aggTr[1], symbol, save_dir, 10)
+
+
+
+
 
 
 
