@@ -8,7 +8,10 @@ using Parquet2
 using StatsBase
 using Base.Threads
 using SkipNan
-
+using CodecZlib
+using CodecZstd
+using Serialization
+using Dates
 
 
 
@@ -145,13 +148,21 @@ function rolling_ema_std(data_vec::AbstractVector, span::Int; padding_value=0.0)
     return result_vector
 end
 
+function ema_norm(feature, l1, l2)
+    ema_short = rolling_ema(feature, l1, padding_value=0.0)
+    ema_long = rolling_ema(feature, l2, padding_value=0.0)
+    ema_std = rolling_ema_std(feature, l2, padding_value=0.0)
+    res = (ema_short - ema_long) ./ ema_std
+    return res
+end
+
 function get_pct_mean(X, pct, target)
     x = X[.!isnan.(X)]
     th_low, th_high = quantile(x, pct/100), quantile(x, (100-pct)/100)
     # println("th_low: $(th_low), th_high: $(th_high)")
     mask_down = X .<= th_low
     mask_up = X .>= th_high
-    return mean(target[mask_down]), mean(target[mask_up])
+    return mean(skipnan(target[mask_down])), mean(skipnan(target[mask_up]))
 end
 
 
@@ -734,6 +745,84 @@ function get_signals(f, th_pct1; th_pct2=0.0)
 end
 
 
+function read_zstd_file_one(path)
+    df = open(path, "r") do f
+        io = ZstdDecompressorStream(f)
+        try 
+            deserialize(io) 
+        finally 
+            close(io) 
+        end
+    end
+    return df
+end
+
+
+function data_injection(df, df_source, cols)
+    tsv = Int64.(df.timestamp .* 1000)
+    idx_wap, idx_source = 1, 1
+
+    while size(df, 1) >= idx_wap && size(df_source, 1) >= idx_source
+        t_wap = tsv[idx_wap]
+        t_source = df_source.local_timestamp[idx_source]
+        # t_source = df_source.timestamp[idx_source]
+
+        if t_wap < t_source
+            if idx_source > 1
+                idx_copy = idx_source - 1
+                for col in cols
+                    df[idx_wap, col] = ismissing(df_source[idx_copy, col]) ? NaN : df_source[idx_copy, col]
+                end
+            # else
+            #     println("can't write cause idx_deri == 1")
+            end
+            idx_wap += 1
+        else
+            idx_source += 1
+        end
+    end
+end
+
+
+
+function get_df_oneday_with_deri_liqu(tardis_dir, s7_dir, symbol, date)
+    deri_dir = joinpath(tardis_dir, "binance-futures", "derivative_ticker", symbol)
+    liqu_dir = joinpath(tardis_dir, "binance-futures", "liquidations", symbol)
+
+    date_str = "$(date[1:4])-$(date[5:6])-$(date[7:8])"
+    deri_path = joinpath(deri_dir, "$(date_str)_$(symbol).csv.gz")
+    df_deri = CSV.read(GzipDecompressorStream(open(deri_path)), DataFrame)
+
+    liqu_path = joinpath(liqu_dir, "$(date_str)_$(symbol).csv.gz")
+    df_liqu = CSV.read(GzipDecompressorStream(open(liqu_path)), DataFrame)
+
+    wap_0ms_path = joinpath(s7_dir, "binance-futures", symbol, date, "WAP_Lag_0ms.df.zst")
+    wap_200ms_path = joinpath(s7_dir, "binance-futures", symbol, date, "WAP_Lag_200ms.df.zst")
+
+    df_0ms = read_zstd_file_one(wap_0ms_path)
+    df_200ms = read_zstd_file_one(wap_200ms_path)
+
+    deri_cols = [:open_interest, :index_price, :mark_price]
+    liqu_cols = [:side, :price, :amount]
+
+    df = deepcopy(df_0ms)
+    df.WAP_Lag_200ms = df_200ms.WAP_Lag_200ms
+    fut_wap = [df.WAP_Lag_0ms[15 + 1 : end]; fill(NaN, 15)]
+    df.ret_bp = 10_000 .* (fut_wap .- df.WAP_Lag_200ms) ./ df.WAP_Lag_200ms
+    # df.ret_bp = 10_000 .* (fut_wap .- df.WAP_Lag_0ms) ./ df.WAP_Lag_0ms
+
+    for col in [deri_cols; liqu_cols]
+        if col == :side
+            df[!, col] .= ""
+        else
+            df[!, col] .= NaN
+        end
+    end
+
+    data_injection(df, df_deri, deri_cols)
+    data_injection(df, df_liqu, liqu_cols)
+    return df
+end
 
 
 
