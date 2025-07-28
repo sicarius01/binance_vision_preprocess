@@ -12,6 +12,10 @@ using CodecZlib
 using CodecZstd
 using Serialization
 using Dates
+using RollingFunctions
+
+
+symbol = "BTCUSDT"
 
 
 
@@ -467,9 +471,10 @@ function backtest_sica_keep(
     symbol="", name="backtest result", is_display=false,
     resampling_interval=1800,
     )        
-    tr_res_vec::Vector{Tuple{Int64, Int64, Float64, Float64, Float64}} = []
+    tr_res_vec::Vector{Tuple{Int64, Int64, Int64, Float64, Float64, Float64}} = []
     curr_pos = 0
     idx_close_pos = -1
+    idx_pos_entry = -1
     entry_price = 0.0
 
     total_len = length(signal_long)
@@ -480,7 +485,7 @@ function backtest_sica_keep(
                 d = curr_pos
                 exit_price = exit_price_vec[idx]
                 profit = d > 0 ? exit_price - entry_price : entry_price - exit_price
-                tr_res = (idx, d, entry_price, exit_price, profit)
+                tr_res = (idx_pos_entry, idx, d, entry_price, exit_price, profit)
                 push!(tr_res_vec, tr_res)
                 curr_pos = 0
             else
@@ -494,18 +499,20 @@ function backtest_sica_keep(
             if signal_long[idx]
                 curr_pos = 1
                 entry_price = entry_price_vec[idx]
+                idx_pos_entry = idx
                 idx_close_pos = idx + keep_position_idx
             elseif signal_short[idx]
                 curr_pos = -1
                 entry_price = entry_price_vec[idx]
+                idx_pos_entry = idx
                 idx_close_pos = idx + keep_position_idx
             end
         end
     end
 
 
-    T = [tr_res[1] for tr_res in tr_res_vec]
-    PnL = [tr_res[5] for tr_res in tr_res_vec]
+    T = [tr_res[2] for tr_res in tr_res_vec]
+    PnL = [tr_res[6] for tr_res in tr_res_vec]
     cumPnL = cumsum(PnL)
     p = plot(T, cumPnL)
     # display(p)
@@ -521,22 +528,22 @@ function backtest_sica_keep(
     win_long_profit_bp_vec, win_short_profit_bp_vec = [], []
     lose_long_profit_bp_vec, lose_short_profit_bp_vec = [], []
     for tr_res in tr_res_vec
-        profit = tr_res[5]
-        profit_bp = 10000 * profit / tr_res[3]
+        profit = tr_res[6]
+        profit_bp = 10000 * profit / tr_res[4]
         if profit > 0
             win_cnt += 1
             push!(win_profit_bp_vec, profit_bp)
-            if tr_res[2] > 0
+            if tr_res[3] > 0
                 push!(win_long_profit_bp_vec, profit_bp)
-            elseif tr_res[2] < 0
+            elseif tr_res[3] < 0
                 push!(win_short_profit_bp_vec, profit_bp)
             end
         elseif profit < 0
             lose_cnt += 1
             push!(lose_profit_bp_vec, profit_bp)
-            if tr_res[2] > 0
+            if tr_res[3] > 0
                 push!(lose_long_profit_bp_vec, profit_bp)
-            elseif tr_res[2] < 0
+            elseif tr_res[3] < 0
                 push!(lose_short_profit_bp_vec, profit_bp)
             end
         end
@@ -599,27 +606,27 @@ end
 function backtest_sica_2(
     signal_long, signal_short, entry_price_vec, exit_price_vec, timestamp_vec; 
     symbol="", name="backtest result", is_display=false,
-    resampling_interval=1800,
+    resampling_interval=1800, max_duration=Inf,
     )        
     # signal_long = aq_rb .>= quantile(aq_rb[.!isnan.(aq_rb)], 0.9)
     # signal_short = aq_rb .<= quantile(aq_rb[.!isnan.(aq_rb)], 0.1)
     # entry_price_vec = df.WAP_Lag_300ms
     # exit_price_vec = df.WAP_Lag_0ms
 
-    tr_res_vec::Vector{Tuple{Int64, Int64, Float64, Float64, Float64}} = []
+    tr_res_vec::Vector{Tuple{Int64, Int64, Int64, Float64, Float64, Float64}} = []
     curr_pos = 0
     idx_pos_entry = -1
     entry_price = 0.0
 
     total_len = length(signal_long)
     for idx in 1:total_len
-        if isnan(entry_price_vec[idx]) || isnan(exit_price_vec[idx]) continue end
+        if isnan(entry_price_vec[idx]) || isnan(exit_price_vec[idx]) || (idx - idx_pos_entry >= max_duration) continue end
         if curr_pos !== 0
             if (curr_pos > 0 && signal_short[idx]) || (curr_pos < 0 && signal_long[idx])
                 d = curr_pos
                 exit_price = exit_price_vec[idx]
                 profit = d > 0 ? exit_price - entry_price : entry_price - exit_price
-                tr_res = (idx, d, entry_price, exit_price, profit)
+                tr_res = (idx_pos_entry, idx, d, entry_price, exit_price, profit)
                 push!(tr_res_vec, tr_res)
                 curr_pos = 0
             end
@@ -637,8 +644,8 @@ function backtest_sica_2(
     end
 
 
-    T = [tr_res[1] for tr_res in tr_res_vec]
-    PnL = [tr_res[5] for tr_res in tr_res_vec]
+    T = [tr_res[2] for tr_res in tr_res_vec]
+    PnL = [tr_res[6] for tr_res in tr_res_vec]
     cumPnL = cumsum(PnL)
     p = plot(T, cumPnL)
     # display(p)
@@ -655,34 +662,39 @@ function backtest_sica_2(
     win_long_profit_bp_vec, win_short_profit_bp_vec = [], []
     lose_long_profit_bp_vec, lose_short_profit_bp_vec = [], []
     for tr_res in tr_res_vec
-        profit = tr_res[5]
-        profit_bp = 10000 * profit / tr_res[3]
+        profit = tr_res[6]
+        profit_bp = 10000 * profit / tr_res[4]
         if profit > 0
             win_cnt += 1
             push!(win_profit_bp_vec, profit_bp)
             push!(total_profit_bp_vec, profit_bp)
-            if tr_res[2] > 0
+            if tr_res[3] > 0
                 push!(win_long_profit_bp_vec, profit_bp)
-            elseif tr_res[2] < 0
+            elseif tr_res[3] < 0
                 push!(win_short_profit_bp_vec, profit_bp)
             end
         elseif profit < 0
             lose_cnt += 1
             push!(lose_profit_bp_vec, profit_bp)
             push!(total_profit_bp_vec, profit_bp)
-            if tr_res[2] > 0
+            if tr_res[3] > 0
                 push!(lose_long_profit_bp_vec, profit_bp)
-            elseif tr_res[2] < 0
+            elseif tr_res[3] < 0
                 push!(lose_short_profit_bp_vec, profit_bp)
             end
         end
     end
     win_rate, lose_rate = win_cnt / length(tr_res_vec), lose_cnt / length(tr_res_vec)
+    avg_win_long = length(win_long_profit_bp_vec) == 0 ? 0.0 : round(mean(win_long_profit_bp_vec), digits=4)
+    avg_win_short = length(win_short_profit_bp_vec) == 0 ? 0.0 : round(mean(win_short_profit_bp_vec), digits=4)
+    avg_lose_long = length(lose_long_profit_bp_vec) == 0 ? 0.0 : round(mean(lose_long_profit_bp_vec), digits=4)
+    avg_lose_short = length(lose_short_profit_bp_vec) == 0 ? 0.0 : round(mean(lose_short_profit_bp_vec), digits=4)
+
     println("Win Rate: $(round(win_rate * 100, digits=2))%, Lose Rate: $(round(lose_rate * 100, digits=2))%")
     println("Mean Profig(bp) : $(round(mean(total_profit_bp_vec), digits=4))")
     println("Mean Profit(bp) - Win: $(round(mean(win_profit_bp_vec), digits=4))\tLose: $(round(mean(lose_profit_bp_vec), digits=4))")
-    println("Mean Profit(bp) Win - Long: $(round(mean(win_long_profit_bp_vec), digits=4))\tShort: $(round(mean(win_short_profit_bp_vec), digits=4))")
-    println("Mean Profit(bp) Lose - Long: $(round(mean(lose_long_profit_bp_vec), digits=4))\tShort: $(round(mean(lose_short_profit_bp_vec), digits=4))")
+    println("Mean Profit(bp) Win - Long: $(avg_win_long)\tShort: $(avg_win_short)")
+    println("Mean Profit(bp) Lose - Long: $(avg_lose_long)\tShort: $(avg_lose_short)")
 
     show_idx = [idx for idx in 1:resampling_interval:total_len]
     date_vec = Dates.unix2datetime.([Int64(ts ÷ 1_000) for ts in timestamp_vec[show_idx]])  # 날짜만 추출
@@ -709,10 +721,10 @@ function backtest_sica_2(
         Avg. Win  (bp):       $(round(mean(win_profit_bp_vec), digits=4))
         Avg. Loss (bp):       $(round(mean(lose_profit_bp_vec), digits=4))
         ----------------------
-        Avg. Win  Long  (bp): $(round(mean(win_long_profit_bp_vec), digits=4))
-        Avg. Win  Short (bp): $(round(mean(win_short_profit_bp_vec), digits=4))
-        Avg. Loss Long  (bp): $(round(mean(lose_long_profit_bp_vec), digits=4))
-        Avg. Loss Short (bp): $(round(mean(lose_short_profit_bp_vec), digits=4))
+        Avg. Win  Long  (bp): $(avg_win_long)
+        Avg. Win  Short (bp): $(avg_win_short)
+        Avg. Loss Long  (bp): $(avg_lose_long)
+        Avg. Loss Short (bp): $(avg_lose_short)
         ------------------------------------
         Max Drawdown:         ???
         Sharpe Ratio:         ???
@@ -729,7 +741,7 @@ function backtest_sica_2(
         display(final_plot)
     end
 
-    return final_plot
+    return final_plot, tr_res_vec
 end
 
 
@@ -765,7 +777,6 @@ function data_injection(df, df_source, cols)
     while size(df, 1) >= idx_wap && size(df_source, 1) >= idx_source
         t_wap = tsv[idx_wap]
         t_source = df_source.local_timestamp[idx_source]
-        # t_source = df_source.timestamp[idx_source]
 
         if t_wap < t_source
             if idx_source > 1
@@ -773,14 +784,62 @@ function data_injection(df, df_source, cols)
                 for col in cols
                     df[idx_wap, col] = ismissing(df_source[idx_copy, col]) ? NaN : df_source[idx_copy, col]
                 end
-            # else
-            #     println("can't write cause idx_deri == 1")
             end
             idx_wap += 1
         else
             idx_source += 1
         end
     end
+end
+
+
+function set_ret_bp(df, ret_interval)
+    fut_wap = [df.WAP_Lag_0ms[ret_interval+1 : end]; fill(NaN, ret_interval)]
+    ret_bp = 10_000 .* (fut_wap .- df.WAP_Lag_0ms) ./ df.WAP_Lag_0ms
+    df.ret_bp = ret_bp
+end
+
+
+function get_df_oneday_full(tardis_dir, s7_dir, symbol, date, features)
+    deri_dir = joinpath(tardis_dir, "binance-futures", "derivative_ticker", symbol)
+    liqu_dir = joinpath(tardis_dir, "binance-futures", "liquidations", symbol)
+
+    date_str = "$(date[1:4])-$(date[5:6])-$(date[7:8])"
+    deri_path = joinpath(deri_dir, "$(date_str)_$(symbol).csv.gz")
+    df_deri = CSV.read(GzipDecompressorStream(open(deri_path)), DataFrame)
+
+    liqu_path = joinpath(liqu_dir, "$(date_str)_$(symbol).csv.gz")
+    df_liqu = CSV.read(GzipDecompressorStream(open(liqu_path)), DataFrame)
+
+    deri_cols = [:open_interest, :index_price, :mark_price]
+    liqu_cols = [:side, :price, :amount]
+    
+    df_features = []
+    for (feature, cols) in features
+        feature_path = joinpath(s7_dir, "binance-futures", symbol, date, "$(feature).df.zst")
+        df_feature_all = read_zstd_file_one(feature_path)
+        df_feature = df_feature_all[!, cols]
+        push!(df_features, df_feature)
+    end
+
+    df = deepcopy(df_features[1])
+    for df_feature in df_features
+        for col in names(df_feature)
+            df[!, col] = df_feature[!, col]
+        end
+    end
+
+    for col in [deri_cols; liqu_cols]
+        if col == :side
+            df[!, col] .= ""
+        else
+            df[!, col] .= NaN
+        end
+    end
+
+    data_injection(df, df_deri, deri_cols)
+    data_injection(df, df_liqu, liqu_cols)
+    return df
 end
 
 
@@ -825,4 +884,83 @@ function get_df_oneday_with_deri_liqu(tardis_dir, s7_dir, symbol, date)
 end
 
 
+function get_last_non_nan_idx(data)
+    idx_end = length(data)
+    while idx_end > 0
+        if data[idx_end] !== NaN return idx_end end
+        idx_end -= 1
+    end
+    return idx_end
+end
 
+function get_norm_ret_bp_path(tr_res_vec, wap)
+    directions = []
+    wap_path = []
+    for tr_res in tr_res_vec
+        i0, i1, direction = tr_res[1:3]
+        wp = wap[i0:i1]
+        push!(wap_path, wp)
+        push!(directions, direction > 0)
+    end
+
+    norm_paths = [fill(NaN, 100) for i in 1:length(wap_path)]
+    for (i, wp) in enumerate(wap_path)
+        is_long = directions[i]
+        l = length(wp)
+        ii = l >= 100 ? (1 : l÷99: l) : (1 : l)
+        for (i2, ii2)in enumerate(ii)
+            if i2 > 100 break end
+            diff = is_long ? wp[ii2] - wp[1] : wp[1] - wp[ii2]
+            norm_paths[i][i2] = 10_000 * diff / wp[1]
+        end
+        diff = is_long ? wp[end] - wp[1] : wp[1] - wp[end]
+        idx_end = get_last_non_nan_idx(norm_paths[i])
+        norm_paths[i][idx_end] = 10_000 * diff / wp[1]
+    end
+
+    avg_norm_paths = fill(NaN, 100)
+    median_norm_paths = fill(NaN, 100)
+    for i in 1:100
+        avg_norm_paths[i] = mean(skipnan(norm_paths[i2][i] for i2 in 1:length(norm_paths)))
+        median_norm_paths[i] = median(skipnan(norm_paths[i2][i] for i2 in 1:length(norm_paths)))
+    end
+    return avg_norm_paths, median_norm_paths
+end
+
+
+
+
+function get_full_ret_bp_path(tr_res_vec, wap)
+    directions = []
+    wap_path = []
+    for tr_res in tr_res_vec
+        i0, i1, direction = tr_res[1:3]
+        wp = wap[i0:i1]
+        push!(wap_path, wp)
+        push!(directions, direction > 0)
+    end
+
+    max_l = maximum([length(wp) for wp in wap_path])
+    pr_paths = [fill(NaN, max_l) for i in 1:length(wap_path)]
+    for (i, wp) in enumerate(wap_path)
+        is_long = directions[i]
+        for (ii2, wpi) in enumerate(wp)
+            diff = is_long ? wpi - wp[1] : wp[1] - wpi
+            pr_paths[i][ii2] = 10_000 * diff / wp[1]
+        end
+    end
+
+    avg_pr_paths = fill(NaN, max_l)
+    median_pr_paths = fill(NaN, max_l)
+    remainer = fill(0, max_l)
+    for i in 1:max_l
+        try
+            avg_pr_paths[i] = mean(skipnan(pr_paths[i2][i] for i2 in 1:length(pr_paths)))
+            median_pr_paths[i] = median(skipnan(pr_paths[i2][i] for i2 in 1:length(pr_paths)))
+            remainer[i] = sum(.!isnan.([pr_paths[i2][i] for i2 in 1:length(pr_paths)]))
+        catch
+            println(i)
+        end
+    end
+    return avg_pr_paths, median_pr_paths, remainer
+end
