@@ -46,6 +46,7 @@ f2n2 = ema_norm(f2, 15, 900)
 
 pct = 0.5
 sl, ss = get_signals(f1n2, pct, th_pct2=0.0)
+sl, ss = get_signals(f1, pct, th_pct2=0.0)
 backtest_sica(sl, ss, df.WAP_Lag_200ms, df.WAP_Lag_0ms, df.timestamp, symbol=symbol, 15)
 plt, tr_res_vec = backtest_sica_2(sl, ss, df.WAP_Lag_200ms, df.WAP_Lag_0ms, df.timestamp, symbol=symbol, is_display=true)
 
@@ -69,11 +70,69 @@ end
 
 
 avg_pr_paths, median_pr_paths, remainer = get_full_ret_bp_path(tr_res_vec, wap)
-
 begin
     plot(avg_pr_paths, label="avg")
     # plot!(median_pr_paths, label="median")
     plot!(twinx(), remainer, label="remain", color=:green)
+end
+
+
+
+
+
+
+ltr = [tr for tr in tr_res_vec if tr[3] > 0]
+str = [tr for tr in tr_res_vec if tr[3] < 0]
+
+begin
+    avg_norm_paths_f, median_norm_paths_f = get_norm_feature_path(ltr, f1n2)
+    avg_norm_paths, median_norm_paths = get_norm_feature_path(ltr, wap)
+    plot(avg_norm_paths_f, label="feature")
+    plot!(avg_norm_paths, label="ret")
+    title!("Long")
+end
+
+begin
+    avg_norm_paths_f, median_norm_paths_f = get_norm_feature_path(str, f1n2)
+    avg_norm_paths, median_norm_paths = get_norm_feature_path(str, wap)
+    plot(avg_norm_paths_f, label="feature")
+    plot!(avg_norm_paths, label="ret")
+    title!("Short")
+end
+
+
+
+
+
+win = 500
+idx_at_list = [tr[1] for tr in tr_res_vec if tr[3] > 0]
+idx_at_list = [tr[2] for tr in tr_res_vec if tr[3] > 0]
+avg_fvs, avg_waps, median_fvs, median_waps = get_at_time_profile(f1n2, wap, win, idx_at_list)
+
+begin
+    plot(-win:win, avg_fvs, label="fv", title="Long - fv [f1n2]")
+    plot!([0], [avg_fvs[win+1]], seriestype = :scatter)
+end
+begin
+    plot(-win:win, avg_waps, label="wap", title="Long - wap [f1n2]")
+    plot!([0], [avg_waps[win+1]], seriestype = :scatter)
+end
+
+
+
+
+win = 500
+idx_at_list = [tr[1] for tr in tr_res_vec if tr[3] < 0]
+idx_at_list = [tr[2] for tr in tr_res_vec if tr[3] < 0]
+avg_fvs, avg_waps, median_fvs, median_waps = get_at_time_profile(f1n2, wap, win, idx_at_list)
+
+begin
+    plot(-win:win, avg_fvs, label="fv", title="Short - fv [f1n2]")
+    plot!([0], [avg_fvs[win+1]], seriestype = :scatter)
+end
+begin
+    plot(-win:win, avg_waps, label="wap", title="Short - wap [f1n2]")
+    plot!([0], [avg_waps[win+1]], seriestype = :scatter)
 end
 
 
@@ -89,56 +148,57 @@ end
 
 
 
-histogram(df.open_interest)
-histogram(df.ret_bp, xlims=(-30, 30))
 
-df[!, "wap-index_price"] .= 10_000 .* (df.index_price .- df.WAP_Lag_0ms) ./ df.WAP_Lag_0ms
-histogram(df[!, "wap-index_price"])
+# histogram(df.open_interest)
+# histogram(df.ret_bp, xlims=(-30, 30))
 
-df[!, "wap-mark_price"] .= 10_000 .* (df.mark_price .- df.WAP_Lag_0ms) ./ df.WAP_Lag_0ms
-histogram(df[!, "wap-mark_price"])
+# df[!, "wap-index_price"] .= 10_000 .* (df.index_price .- df.WAP_Lag_0ms) ./ df.WAP_Lag_0ms
+# histogram(df[!, "wap-index_price"])
 
-simple_view_feature_power(df[!, "wap-index_price"], df.ret_bp)
-simple_view_feature_power(df[!, "wap-mark_price"], df.ret_bp)
+# df[!, "wap-mark_price"] .= 10_000 .* (df.mark_price .- df.WAP_Lag_0ms) ./ df.WAP_Lag_0ms
+# histogram(df[!, "wap-mark_price"])
 
-si = [i for i in 1:600:size(df, 1)]
-plot(df[si, "wap-index_price"], df[si, "ret_bp"], seriestype = :scatter, markersize=2)
-plot(df[si, "wap-mark_price"], df[si, "ret_bp"], seriestype = :scatter, markersize=2)
+# simple_view_feature_power(df[!, "wap-index_price"], df.ret_bp)
+# simple_view_feature_power(df[!, "wap-mark_price"], df.ret_bp)
 
-f1 = df[!, "wap-index_price"]
-f2 = df[!, "wap-mark_price"]
+# si = [i for i in 1:600:size(df, 1)]
+# plot(df[si, "wap-index_price"], df[si, "ret_bp"], seriestype = :scatter, markersize=2)
+# plot(df[si, "wap-mark_price"], df[si, "ret_bp"], seriestype = :scatter, markersize=2)
 
-pct = 1.0
-sl, ss = get_signals(f1, pct)
+# f1 = df[!, "wap-index_price"]
+# f2 = df[!, "wap-mark_price"]
 
-backtest_sica(sl, ss, df.WAP_Lag_200ms, df.WAP_Lag_0ms, df.timestamp, 15)
-backtest_sica_2(sl, ss, df.WAP_Lag_200ms, df.WAP_Lag_0ms, df.timestamp, is_display=true)
+# pct = 1.0
+# sl, ss = get_signals(f1, pct)
 
-
-pct = 1.0
-sl, ss = get_signals(f2, pct)
-
-backtest_sica(sl, ss, df.WAP_Lag_200ms, df.WAP_Lag_0ms, df.timestamp, 15)
-backtest_sica_2(sl, ss, df.WAP_Lag_200ms, df.WAP_Lag_0ms, df.timestamp, is_display=true)
+# backtest_sica(sl, ss, df.WAP_Lag_200ms, df.WAP_Lag_0ms, df.timestamp, 15)
+# backtest_sica_2(sl, ss, df.WAP_Lag_200ms, df.WAP_Lag_0ms, df.timestamp, is_display=true)
 
 
+# pct = 1.0
+# sl, ss = get_signals(f2, pct)
 
-f1_norm = norm_by_before_n_days(f1, 7, 1)
-f2_norm = norm_by_before_n_days(f2, 7, 1)
-histogram(f1_norm, xlims=(-10, 10))
-histogram(f2_norm, xlims=(-10, 10))
+# backtest_sica(sl, ss, df.WAP_Lag_200ms, df.WAP_Lag_0ms, df.timestamp, 15)
+# backtest_sica_2(sl, ss, df.WAP_Lag_200ms, df.WAP_Lag_0ms, df.timestamp, is_display=true)
 
-simple_view_feature_power(f1_norm, df.ret_bp)
-simple_view_feature_power(f2_norm, df.ret_bp)
 
-pct = 0.1
-sl, ss = get_signals(f1_norm, pct)
-backtest_sica(sl, ss, df.WAP_Lag_200ms, df.WAP_Lag_0ms, df.timestamp, 15)
-backtest_sica_2(sl, ss, df.WAP_Lag_200ms, df.WAP_Lag_0ms, df.timestamp, is_display=true)
 
-sl, ss = get_signals(f2_norm, pct)
-backtest_sica(sl, ss, df.WAP_Lag_200ms, df.WAP_Lag_0ms, df.timestamp, 15)
-backtest_sica_2(sl, ss, df.WAP_Lag_200ms, df.WAP_Lag_0ms, df.timestamp, is_display=true)
+# f1_norm = norm_by_before_n_days(f1, 7, 1)
+# f2_norm = norm_by_before_n_days(f2, 7, 1)
+# histogram(f1_norm, xlims=(-10, 10))
+# histogram(f2_norm, xlims=(-10, 10))
+
+# simple_view_feature_power(f1_norm, df.ret_bp)
+# simple_view_feature_power(f2_norm, df.ret_bp)
+
+# pct = 0.1
+# sl, ss = get_signals(f1_norm, pct)
+# backtest_sica(sl, ss, df.WAP_Lag_200ms, df.WAP_Lag_0ms, df.timestamp, 15)
+# backtest_sica_2(sl, ss, df.WAP_Lag_200ms, df.WAP_Lag_0ms, df.timestamp, is_display=true)
+
+# sl, ss = get_signals(f2_norm, pct)
+# backtest_sica(sl, ss, df.WAP_Lag_200ms, df.WAP_Lag_0ms, df.timestamp, 15)
+# backtest_sica_2(sl, ss, df.WAP_Lag_200ms, df.WAP_Lag_0ms, df.timestamp, is_display=true)
 
 
 

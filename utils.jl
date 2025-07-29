@@ -15,7 +15,6 @@ using Dates
 using RollingFunctions
 
 
-symbol = "BTCUSDT"
 
 
 
@@ -745,6 +744,146 @@ function backtest_sica_2(
 end
 
 
+
+function backtest_sica_3(
+    signal_long_entry, signal_long_exit, signal_short_entry, signal_short_exit, entry_price_vec, exit_price_vec, timestamp_vec; 
+    symbol="", name="backtest result", is_display=false,
+    resampling_interval=1800, 
+    # max_duration=Inf, min_duration=0,
+    )
+
+    tr_res_vec::Vector{Tuple{Int64, Int64, Int64, Float64, Float64, Float64}} = []
+    curr_pos = 0
+    idx_pos_entry = -1
+    entry_price = 0.0
+
+    total_len = length(signal_long_entry)
+    for idx in 1:total_len
+        if isnan(entry_price_vec[idx]) || isnan(exit_price_vec[idx]) continue end
+        if curr_pos !== 0
+            if (curr_pos < 0 && signal_short_exit[idx]) || (curr_pos > 0 && signal_long_exit[idx])
+                d = curr_pos
+                exit_price = exit_price_vec[idx]
+                profit = d > 0 ? exit_price - entry_price : entry_price - exit_price
+                tr_res = (idx_pos_entry, idx, d, entry_price, exit_price, profit)
+                push!(tr_res_vec, tr_res)
+                curr_pos = 0
+            end
+        else
+            if signal_long_entry[idx]
+                curr_pos = 1
+                entry_price = entry_price_vec[idx]
+                idx_pos_entry = idx
+            elseif signal_short_entry[idx]
+                curr_pos = -1
+                entry_price = entry_price_vec[idx]
+                idx_pos_entry = idx
+            end
+        end
+    end
+
+
+    T = [tr_res[2] for tr_res in tr_res_vec]
+    PnL = [tr_res[6] for tr_res in tr_res_vec]
+    cumPnL = cumsum(PnL)
+    p = plot(T, cumPnL)
+    # display(p)
+
+    full_PnL = fill(0.0, total_len)
+    for (i, t) in enumerate(T)
+        full_PnL[t] = PnL[i]
+    end
+    full_cumPnL = cumsum(full_PnL)
+
+    win_cnt, lose_cnt = 0, 0
+    total_profit_bp_vec = []
+    win_profit_bp_vec, lose_profit_bp_vec = [], []
+    win_long_profit_bp_vec, win_short_profit_bp_vec = [], []
+    lose_long_profit_bp_vec, lose_short_profit_bp_vec = [], []
+    for tr_res in tr_res_vec
+        profit = tr_res[6]
+        profit_bp = 10000 * profit / tr_res[4]
+        if profit > 0
+            win_cnt += 1
+            push!(win_profit_bp_vec, profit_bp)
+            push!(total_profit_bp_vec, profit_bp)
+            if tr_res[3] > 0
+                push!(win_long_profit_bp_vec, profit_bp)
+            elseif tr_res[3] < 0
+                push!(win_short_profit_bp_vec, profit_bp)
+            end
+        elseif profit < 0
+            lose_cnt += 1
+            push!(lose_profit_bp_vec, profit_bp)
+            push!(total_profit_bp_vec, profit_bp)
+            if tr_res[3] > 0
+                push!(lose_long_profit_bp_vec, profit_bp)
+            elseif tr_res[3] < 0
+                push!(lose_short_profit_bp_vec, profit_bp)
+            end
+        end
+    end
+    win_rate, lose_rate = win_cnt / length(tr_res_vec), lose_cnt / length(tr_res_vec)
+    avg_win_long = length(win_long_profit_bp_vec) == 0 ? 0.0 : round(mean(win_long_profit_bp_vec), digits=4)
+    avg_win_short = length(win_short_profit_bp_vec) == 0 ? 0.0 : round(mean(win_short_profit_bp_vec), digits=4)
+    avg_lose_long = length(lose_long_profit_bp_vec) == 0 ? 0.0 : round(mean(lose_long_profit_bp_vec), digits=4)
+    avg_lose_short = length(lose_short_profit_bp_vec) == 0 ? 0.0 : round(mean(lose_short_profit_bp_vec), digits=4)
+
+    println("Win Rate: $(round(win_rate * 100, digits=2))%, Lose Rate: $(round(lose_rate * 100, digits=2))%")
+    println("Mean Profig(bp) : $(round(mean(total_profit_bp_vec), digits=4))")
+    println("Mean Profit(bp) - Win: $(round(mean(win_profit_bp_vec), digits=4))\tLose: $(round(mean(lose_profit_bp_vec), digits=4))")
+    println("Mean Profit(bp) Win - Long: $(avg_win_long)\tShort: $(avg_win_short)")
+    println("Mean Profit(bp) Lose - Long: $(avg_lose_long)\tShort: $(avg_lose_short)")
+
+    show_idx = [idx for idx in 1:resampling_interval:total_len]
+    date_vec = Dates.unix2datetime.([Int64(ts ÷ 1_000) for ts in timestamp_vec[show_idx]])  # 날짜만 추출
+    p1 = plot(date_vec, exit_price_vec[show_idx], label="Benchmark", color=:gray)
+    p2 = twinx()
+    plot!(p2, date_vec, full_cumPnL[show_idx], label="CumPnL", color=:blue)
+    title!("$(name)-$(symbol)")
+
+    total_profit_bp_vec = [win_profit_bp_vec; lose_profit_bp_vec]
+    # running_max = accumulate(max, cumPnL)
+    # drawdowns = (running_max .- cumPnL) ./ running_max
+    # max_drawdown = maximum(drawdowns)
+    
+    stats_text = """
+        --- Backtest Summary --------------
+        Equity Resample Interval: $(resampling_interval)sec
+        -----------------------------------
+        Total Trades:         $(length(tr_res_vec))
+        Total Return (bp):    $(round(sum(total_profit_bp_vec), digits=4))
+        Avg.  Return (bp):    $(round(mean(total_profit_bp_vec), digits=4))
+        -----------------------------------
+        Win Rate:             $(round(win_rate * 100, digits=2))%
+        Profit Factor:        ???
+        Avg. Win  (bp):       $(round(mean(win_profit_bp_vec), digits=4))
+        Avg. Loss (bp):       $(round(mean(lose_profit_bp_vec), digits=4))
+        ----------------------
+        Avg. Win  Long  (bp): $(avg_win_long)
+        Avg. Win  Short (bp): $(avg_win_short)
+        Avg. Loss Long  (bp): $(avg_lose_long)
+        Avg. Loss Short (bp): $(avg_lose_short)
+        ------------------------------------
+        Max Drawdown:         ???
+        Sharpe Ratio:         ???
+        Sortino Ratio:        ???
+        ------------------------------------
+        """
+    p_info = plot(framestyle=:none, legend=false, xlims=(0, 1), ylims=(0, 1))
+    annotate!(p_info, 0.05, 0.95, text(stats_text, :left, :top, 10, "Courier New"))
+    
+    # 최종 플롯은 p1을 기준으로 합칩니다. p1이 twin_p 정보를 포함하고 있습니다.
+    final_plot = plot(p1, p_info, layout=(1, 2), widths=(0.7, 0.3), size=(1200, 600))
+
+    if is_display
+        display(final_plot)
+    end
+
+    return final_plot, tr_res_vec
+end
+
+
 function get_signals(f, th_pct1; th_pct2=0.0)
     valid_mask = .!isnan.(f) .& isfinite.(f)
     th_long1 = quantile(f[valid_mask], (100 - th_pct1) / 100)
@@ -928,6 +1067,36 @@ function get_norm_ret_bp_path(tr_res_vec, wap)
 end
 
 
+function get_norm_feature_path(tr_res_vec, feature)
+    wap_path = []
+    for tr_res in tr_res_vec
+        i0, i1 = tr_res[1:2]
+        wp = feature[i0:i1]
+        push!(wap_path, wp)
+    end
+
+    norm_paths = [fill(NaN, 100) for i in 1:length(wap_path)]
+    for (i, wp) in enumerate(wap_path)
+        l = length(wp)
+        ii = l >= 100 ? (1 : l÷99: l) : (1 : l)
+        for (i2, ii2)in enumerate(ii)
+            if i2 > 100 break end
+            diff = wp[ii2] - wp[1]
+            norm_paths[i][i2] = diff
+        end
+        diff = wp[end] - wp[1]
+        idx_end = get_last_non_nan_idx(norm_paths[i])
+        norm_paths[i][idx_end] = diff
+    end
+
+    avg_norm_paths = fill(NaN, 100)
+    median_norm_paths = fill(NaN, 100)
+    for i in 1:100
+        avg_norm_paths[i] = mean(skipnan(norm_paths[i2][i] for i2 in 1:length(norm_paths)))
+        median_norm_paths[i] = median(skipnan(norm_paths[i2][i] for i2 in 1:length(norm_paths)))
+    end
+    return avg_norm_paths, median_norm_paths
+end
 
 
 function get_full_ret_bp_path(tr_res_vec, wap)
@@ -964,3 +1133,344 @@ function get_full_ret_bp_path(tr_res_vec, wap)
     end
     return avg_pr_paths, median_pr_paths, remainer
 end
+
+
+function get_first_idx(data, target)
+    for (i, v) in enumerate(data)
+        if v == target return i end
+    end
+    return -1
+end
+
+
+function get_all_targeted_idx(data, target)
+    res = []
+    for (i, v) in enumerate(data)
+        if v == target push!(res, i) end
+    end
+    return res
+end
+
+
+function get_at_time_profile(ft, wap, win, idx_at_list)
+    fvs2d = [fill(NaN, 2*win+1) for i in 1:length(idx_at_list)]
+    waps2d = [fill(NaN, 2*win+1) for i in 1:length(idx_at_list)]
+    for (i, idx_at) in enumerate(idx_at_list)
+        i0 = idx_at - win
+        i1 = idx_at + win
+        if i0 < 1 || i1 > length(wap) continue end
+        fvs2d[i] .= (ft[i0 : i1] .- ft[idx_at])
+        waps2d[i] .= 10_000 .* (wap[i0 : i1] .- wap[idx_at]) ./ wap[idx_at]
+    end
+
+    avg_fvs, avg_waps = fill(NaN, 2*win+1), fill(NaN, 2*win+1)
+    median_fvs, median_waps = fill(NaN, 2*win+1), fill(NaN, 2*win+1)
+    for i in 1 : 2*win+1
+        avg_fvs[i] = mean(skipnan(fvs2d[i2][i] for i2 in 1:length(idx_at_list)))
+        avg_waps[i] = mean(skipnan(waps2d[i2][i] for i2 in 1:length(idx_at_list)))
+        median_fvs[i] = median(skipnan(fvs2d[i2][i] for i2 in 1:length(idx_at_list)))
+        median_waps[i] = median(skipnan(waps2d[i2][i] for i2 in 1:length(idx_at_list)))
+    end
+    return avg_fvs, avg_waps, median_fvs, median_waps
+end
+
+
+function get_quantile_value(sorted_x, th)
+    # @assert 0.0 <= th <= 100
+    idx = 1 + Int64(((length(sorted_x) - 1) * (th / 100.0)) ÷ 1)
+    # @assert idx <= length(sorted_x)
+    sub_idx = ((length(sorted_x) - 1) * (th / 100.0)) % 1.0
+    # @assert 0.0 <= sub_idx
+    quantile_value = if idx == length(sorted_x)
+        sorted_x[idx]
+    else
+        (1.0 - sub_idx) * sorted_x[idx] + sub_idx * sorted_x[idx+1]
+    end
+    return quantile_value
+end
+
+
+function get_ev_info(X, ret_bp, th_vec)
+    mask = .!isnan.(X) .& .!isnan.(ret_bp)
+    sorted_x = sort(X[mask])
+    tb_info = []
+    for (th1, th2) in zip(th_vec[1:end-1], th_vec[2:end])
+        qv1 = get_quantile_value(sorted_x, th1)
+        qv2 = get_quantile_value(sorted_x, th2)
+        msk = qv1 .<= X .<= qv2
+        avg = mean(skipnan(ret_bp[msk]))
+        push!(tb_info, (qv1, qv2, avg))
+    end
+    return tb_info
+end
+
+
+
+"""
+바이너리 서치를 이용해 tb_info에서 tbi[1] <= xi < tbi[2]를 만족하는 인덱스를 찾는 함수
+tb_info: [(start, end, value), ...] 형태의 배열 (오름차순 정렬됨)
+xi: 찾고자 하는 값
+반환값: 조건을 만족하는 인덱스 (1-based), 
+        xi < tb_info[1][1]이면 1, 
+        xi >= tb_info[end][2]이면 length(tb_info)
+"""
+function find_interval_index(tb_info, xi)
+    # 경계 조건 체크
+    if xi < tb_info[1][1]
+        return 1
+    end
+    if xi >= tb_info[end][2]
+        return length(tb_info)
+    end
+    
+    left = 1
+    right = length(tb_info)
+    
+    while left <= right
+        mid = (left + right) ÷ 2
+        tbi = tb_info[mid]
+        
+        if tbi[1] <= xi < tbi[2]
+            return mid
+        elseif xi < tbi[1]
+            right = mid - 1
+        else  # xi >= tbi[2]
+            left = mid + 1
+        end
+    end
+    
+    # 이 지점에 도달하면 안됨 (이미 경계 조건을 체크했으므로)
+    error("Unexpected case in find_interval_index")
+end
+
+
+function get_wsv(tb_info, xi)
+    if isnan(xi) return NaN end
+    ii = find_interval_index(tb_info, xi)
+    i1, i2 = if ii == 1
+        (1, 2)
+    elseif ii == length(tb_info)
+        (length(tb_info) - 1, length(tb_info))
+    else
+        mid = (tb_info[ii][1] + tb_info[ii][2]) / 2.0
+        if xi < mid
+            (ii - 1, ii)
+        else
+            (ii, ii + 1)
+        end
+    end
+
+    dist1 = abs((tb_info[i1][1] + tb_info[i1][2]) / 2.0 - xi)
+    dist2 = abs((tb_info[i2][1] + tb_info[i2][2]) / 2.0 - xi)
+    wsv = (dist2 * tb_info[i1][3] + dist1 * tb_info[i2][3]) / (dist1 + dist2)
+    return wsv
+end
+
+"""
+벡터화된 get_wsv 함수 - 대폭 성능 개선
+"""
+function get_wsv_vectorized(tb_info, X_vec)
+    n = length(X_vec)
+    result = Vector{Float64}(undef, n)
+    
+    # tb_info를 배열로 미리 변환 (접근 속도 향상)
+    n_bins = length(tb_info)
+    starts = [tb_info[i][1] for i in 1:n_bins]
+    ends = [tb_info[i][2] for i in 1:n_bins]
+    values = [tb_info[i][3] for i in 1:n_bins]
+    mids = (starts .+ ends) ./ 2.0
+    
+    for i in 1:n
+        xi = X_vec[i]
+        if isnan(xi)
+            result[i] = NaN
+            continue
+        end
+        
+        # 바이너리 서치로 구간 찾기
+        ii = if xi < starts[1]
+            1
+        elseif xi >= ends[end]
+            n_bins
+        else
+            # 벡터화된 searchsortedfirst 사용
+            searchsortedfirst(starts, xi) - 1
+            if searchsortedfirst(starts, xi) > n_bins
+                n_bins
+            else
+                idx = searchsortedfirst(starts, xi)
+                if idx > 1 && xi < ends[idx-1]
+                    idx - 1
+                else
+                    idx > n_bins ? n_bins : idx
+                end
+            end
+        end
+        
+        # 보간할 두 인덱스 결정
+        i1, i2 = if ii == 1
+            (1, 2)
+        elseif ii == n_bins
+            (n_bins - 1, n_bins)
+        else
+            xi < mids[ii] ? (ii - 1, ii) : (ii, ii + 1)
+        end
+        
+        # 거리 기반 가중 평균
+        dist1 = abs(mids[i1] - xi)
+        dist2 = abs(mids[i2] - xi)
+        
+        if dist1 + dist2 == 0.0
+            result[i] = values[i1]
+        else
+            result[i] = (dist2 * values[i1] + dist1 * values[i2]) / (dist1 + dist2)
+        end
+    end
+    
+    return result
+end
+
+"""
+더 빠른 벡터화 버전 - searchsorted 활용
+"""
+function get_wsv_fast(tb_info, X_vec)
+    n = length(X_vec)
+    result = Vector{Float64}(undef, n)
+    
+    # tb_info를 배열로 변환
+    n_bins = length(tb_info)
+    starts = [tb_info[i][1] for i in 1:n_bins]
+    ends = [tb_info[i][2] for i in 1:n_bins]
+    values = [tb_info[i][3] for i in 1:n_bins]
+    mids = (starts .+ ends) ./ 2.0
+    
+    @inbounds for i in 1:n
+        xi = X_vec[i]
+        if isnan(xi)
+            result[i] = NaN
+            continue
+        end
+        
+        # 효율적인 구간 찾기
+        if xi < starts[1]
+            ii = 1
+        elseif xi >= ends[end]
+            ii = n_bins
+        else
+            # 시작점들 중에서 xi보다 작거나 같은 마지막 인덱스
+            ii = searchsortedlast(starts, xi)
+            if ii == 0 || xi >= ends[ii]
+                ii = min(ii + 1, n_bins)
+            end
+        end
+        
+        # 보간
+        i1, i2 = if ii == 1
+            (1, min(2, n_bins))
+        elseif ii == n_bins
+            (max(n_bins - 1, 1), n_bins)
+        else
+            xi < mids[ii] ? (max(ii - 1, 1), ii) : (ii, min(ii + 1, n_bins))
+        end
+        
+        dist1 = abs(mids[i1] - xi)
+        dist2 = abs(mids[i2] - xi)
+        
+        if dist1 + dist2 == 0.0
+            result[i] = values[i1]
+        else
+            result[i] = (dist2 * values[i1] + dist1 * values[i2]) / (dist1 + dist2)
+        end
+    end
+    
+    return result
+end
+
+"""
+멀티쓰레드 병렬 처리 버전
+"""
+function get_wsv_parallel(tb_info, X_vec; chunk_size=10000)
+    n = length(X_vec)
+    result = Vector{Float64}(undef, n)
+    
+    # tb_info를 배열로 변환 (모든 쓰레드에서 공유)
+    n_bins = length(tb_info)
+    starts = [tb_info[i][1] for i in 1:n_bins]
+    ends = [tb_info[i][2] for i in 1:n_bins]
+    values = [tb_info[i][3] for i in 1:n_bins]
+    mids = (starts .+ ends) ./ 2.0
+    
+    # 청크 단위로 분할하여 병렬 처리
+    @threads for chunk_start in 1:chunk_size:n
+        chunk_end = min(chunk_start + chunk_size - 1, n)
+        
+        @inbounds for i in chunk_start:chunk_end
+            xi = X_vec[i]
+            if isnan(xi)
+                result[i] = NaN
+                continue
+            end
+            
+            # 효율적인 구간 찾기
+            if xi < starts[1]
+                ii = 1
+            elseif xi >= ends[end]
+                ii = n_bins
+            else
+                ii = searchsortedlast(starts, xi)
+                if ii == 0 || xi >= ends[ii]
+                    ii = min(ii + 1, n_bins)
+                end
+            end
+            
+            # 보간
+            i1, i2 = if ii == 1
+                (1, min(2, n_bins))
+            elseif ii == n_bins
+                (max(n_bins - 1, 1), n_bins)
+            else
+                xi < mids[ii] ? (max(ii - 1, 1), ii) : (ii, min(ii + 1, n_bins))
+            end
+            
+            dist1 = abs(mids[i1] - xi)
+            dist2 = abs(mids[i2] - xi)
+            
+            if dist1 + dist2 == 0.0
+                result[i] = values[i1]
+            else
+                result[i] = (dist2 * values[i1] + dist1 * values[i2]) / (dist1 + dist2)
+            end
+        end
+    end
+    
+    return result
+end
+
+"""
+더 세밀한 병렬 처리 버전 - pmap 활용
+"""
+function get_wsv_distributed(tb_info, X_vec; n_chunks=nothing)
+    n = length(X_vec)
+    
+    # 기본적으로 CPU 코어 수만큼 청크 분할
+    if n_chunks === nothing
+        n_chunks = min(Threads.nthreads(), 16)  # 최대 16개 청크
+    end
+    
+    chunk_size = div(n, n_chunks)
+    ranges = [i:min(i+chunk_size-1, n) for i in 1:chunk_size:n]
+    
+    # 각 청크를 병렬로 처리
+    results = Vector{Vector{Float64}}(undef, length(ranges))
+    
+    @threads for (idx, range) in collect(enumerate(ranges))
+        results[idx] = get_wsv_fast(tb_info, X_vec[range])
+    end
+    
+    # 결과 합치기
+    return vcat(results...)
+end
+
+
+
+

@@ -4,45 +4,11 @@
 include("const.jl")
 include("utils.jl")
 
-begin
-    tardis_dir = raw"F:\Public\Tardis_2023\datasets"
-    s7_dir = raw"D:\Sunday7\OnlineData"
-
-    cols_ofi = []
-    for category in ["count", "volume", "money"]
-        for ab in ["ask", "bid"]
-            # for bp in [0, 1, 2, 3, 5, 10]
-            for bp in [0, 1, 2]
-                for pc in ["place", "cancel"]
-                    push!(cols_ofi, "orderflow_v2_$(ab)_$(pc)_$(category)_$(bp)_bp")
-                end
-            end
-        end
-    end
-
-    cols_aqb = []
-    for ab in ["Ask", "Bid"]
-        for bp in [0, 1, 2, 3, 5, 10]
-            push!(cols_aqb, "AggQtyByBP_$(ab)_$(bp)_bp")
-        end
-    end
-end
-
-features = [
-    ("WAP_Lag_0ms", ["timestamp", "WAP_Lag_0ms"]), 
-    ("WAP_Lag_200ms", ["WAP_Lag_200ms"]),
-    ("OrderFlow_v2", cols_ofi),
-    ("AggQtyByBP_many", cols_aqb),
-    ]
-# println(typeof(features))
-
-# date = "20230313"
-# df_one = get_df_oneday_full(tardis_dir, s7_dir, symbol, date, features)
 
 date_list = [
     [string(di) for di in 20230313:20230331]; 
-    # [string(di) for di in 20230401:20230430]; 
-    # [string(di) for di in 20230501:20230531]
+    [string(di) for di in 20230401:20230430];
+    [string(di) for di in 20230501:20230531]
     ]
 df_list = [get_df_oneday_full(tardis_dir, s7_dir, symbol, date_one_day, features) for date_one_day in date_list]
 df = vcat(df_list...)
@@ -75,7 +41,6 @@ end
 
 
 avg_pr_paths, median_pr_paths, remainer = get_full_ret_bp_path(tr_res_vec, wap)
-
 begin
     plot(avg_pr_paths, label="avg")
     plot!(median_pr_paths, label="median")
@@ -84,7 +49,63 @@ end
 
 
 period = [tr_res[2] - tr_res[1] for tr_res in tr_res_vec]
-histogram(period ./ 3600)
+histogram(period ./ 60)
+
+
+
+ltr = [tr for tr in tr_res_vec if tr[3] > 0]
+str = [tr for tr in tr_res_vec if tr[3] < 0]
+
+begin
+    avg_norm_paths_f, median_norm_paths_f = get_norm_feature_path(ltr, ofi)
+    avg_norm_paths, median_norm_paths = get_norm_feature_path(ltr, wap)
+    plot(avg_norm_paths_f, label="feature")
+    plot!(avg_norm_paths, label="ret")
+    title!("Long")
+end
+
+begin
+    avg_norm_paths_f, median_norm_paths_f = get_norm_feature_path(str, ofi)
+    avg_norm_paths, median_norm_paths = get_norm_feature_path(str, wap)
+    plot(avg_norm_paths_f, label="feature")
+    plot!(avg_norm_paths, label="ret")
+    title!("Short")
+end
+
+
+
+
+
+win = 500
+idx_at_list = [tr[1] for tr in tr_res_vec if tr[3] > 0]
+avg_fvs, avg_waps, median_fvs, median_waps = get_at_time_profile(ofi, wap, win, idx_at_list)
+
+begin
+    plot(-win:win, avg_fvs, label="fv", title="Long - fv [ofi]")
+    plot!([0], [avg_fvs[win+1]], seriestype = :scatter)
+end
+begin
+    plot(-win:win, avg_waps, label="wap", title="Long - wap [ofi]")
+    plot!([0], [avg_waps[win+1]], seriestype = :scatter)
+end
+
+
+
+
+win = 500
+idx_at_list = [tr[1] for tr in tr_res_vec if tr[3] < 0]
+avg_fvs, avg_waps, median_fvs, median_waps = get_at_time_profile(ofi, wap, win, idx_at_list)
+
+begin
+    plot(-win:win, avg_fvs, label="fv", title="Short - fv [ofi]")
+    plot!([0], [avg_fvs[win+1]], seriestype = :scatter)
+end
+begin
+    plot(-win:win, avg_waps, label="wap", title="Short - wap [ofi]")
+    plot!([0], [avg_waps[win+1]], seriestype = :scatter)
+end
+
+
 
 
 
