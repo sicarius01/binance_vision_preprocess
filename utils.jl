@@ -605,7 +605,7 @@ end
 function backtest_sica_2(
     signal_long, signal_short, entry_price_vec, exit_price_vec, timestamp_vec; 
     symbol="", name="backtest result", is_display=false,
-    resampling_interval=1800, max_duration=Inf,
+    resampling_interval=1800, max_duration=Inf, is_print=true
     )        
     # signal_long = aq_rb .>= quantile(aq_rb[.!isnan.(aq_rb)], 0.9)
     # signal_short = aq_rb .<= quantile(aq_rb[.!isnan.(aq_rb)], 0.1)
@@ -688,12 +688,13 @@ function backtest_sica_2(
     avg_win_short = length(win_short_profit_bp_vec) == 0 ? 0.0 : round(mean(win_short_profit_bp_vec), digits=4)
     avg_lose_long = length(lose_long_profit_bp_vec) == 0 ? 0.0 : round(mean(lose_long_profit_bp_vec), digits=4)
     avg_lose_short = length(lose_short_profit_bp_vec) == 0 ? 0.0 : round(mean(lose_short_profit_bp_vec), digits=4)
-
-    println("Win Rate: $(round(win_rate * 100, digits=2))%, Lose Rate: $(round(lose_rate * 100, digits=2))%")
-    println("Mean Profig(bp) : $(round(mean(total_profit_bp_vec), digits=4))")
-    println("Mean Profit(bp) - Win: $(round(mean(win_profit_bp_vec), digits=4))\tLose: $(round(mean(lose_profit_bp_vec), digits=4))")
-    println("Mean Profit(bp) Win - Long: $(avg_win_long)\tShort: $(avg_win_short)")
-    println("Mean Profit(bp) Lose - Long: $(avg_lose_long)\tShort: $(avg_lose_short)")
+    if is_print
+        println("Win Rate: $(round(win_rate * 100, digits=2))%, Lose Rate: $(round(lose_rate * 100, digits=2))%")
+        println("Mean Profit(bp) : $(round(mean(total_profit_bp_vec), digits=4))")
+        println("Mean Profit(bp) - Win: $(round(mean(win_profit_bp_vec), digits=4))\tLose: $(round(mean(lose_profit_bp_vec), digits=4))")
+        println("Mean Profit(bp) Win - Long: $(avg_win_long)\tShort: $(avg_win_short)")
+        println("Mean Profit(bp) Lose - Long: $(avg_lose_long)\tShort: $(avg_lose_short)")
+    end
 
     show_idx = [idx for idx in 1:resampling_interval:total_len]
     date_vec = Dates.unix2datetime.([Int64(ts ÷ 1_000) for ts in timestamp_vec[show_idx]])  # 날짜만 추출
@@ -1471,6 +1472,98 @@ function get_wsv_distributed(tb_info, X_vec; n_chunks=nothing)
     return vcat(results...)
 end
 
+
+function get_evv_df(ft_gen_map, ret_col_name, th_vec)
+    ft_map = Dict()
+    for (ft_name, ft_generator) in ft_gen_map
+        ft_map[ft_name] = (ft_generator(df_train), ft_generator(df_test))
+    end
+
+    tb_info_map = Dict()
+    ret_bp = df_train[!, ret_col_name]
+    for (ft_name, ft_tuple) in ft_map
+        tb_info_map[ft_name] = get_ev_info(ft_tuple[1], ret_bp, th_vec)
+    end
+
+    df_evv_train, df_evv_test = DataFrame(), DataFrame()
+    for ft_name in keys(ft_map)
+        tb_info = tb_info_map[ft_name]
+        df_evv_train[!, ft_name] = get_wsv_parallel(tb_info, ft_map[ft_name][1])
+        df_evv_test[!, ft_name] = get_wsv_parallel(tb_info, ft_map[ft_name][2])
+    end
+
+    # 모든 feature들의 동일가중 평균 계산
+    df_evv_train[!, "equal_weight_sum"] .= sum(df_evv_train[!, ft_name] for ft_name in keys(ft_map)) ./ length(ft_map)
+    df_evv_test[!, "equal_weight_sum"] .= sum(df_evv_test[!, ft_name] for ft_name in keys(ft_map)) ./ length(ft_map)
+
+    return df_evv_train, df_evv_test
+end
+
+
+# 단순 가중평균 계산 함수
+function calc_weighted_sum(df_evv, weights_dict)
+    weighted_sum = zeros(size(df_evv, 1))
+    total_weight = sum(values(weights_dict))
+    
+    for (ft_name, weight) in weights_dict
+        weighted_sum .+= df_evv[!, ft_name] .* (weight / total_weight)
+    end
+    
+    return weighted_sum
+end
+
+# 레짐별 가중평균 계산 함수 
+function calc_regime_weighted_sum(df_evv, regime_vec, regime_weights_dict, ft_names)
+    n_samples = size(df_evv, 1)
+    all_regimes = unique(regime_vec)
+    total_weight_map = Dict()
+    for regime in all_regimes
+        total_weight_map[regime] = sum(values(regime_weights_dict[regime]))
+    end
+
+    regime_weight_map = Dict()
+    for ft_name in ft_names
+        regime_weight_map[ft_name] = fill(0.0, n_samples)
+        for regime in all_regimes
+            regime_weight_map[ft_name][regime_vec .== regime] .= regime_weights_dict[regime][ft_name] / total_weight_map[regime]
+        end
+    end
+    weighted_sum = sum(df_evv[!, ft_name] .* regime_weight_map[ft_name] for ft_name in ft_names)
+    return weighted_sum
+end
+
+
+function summary_evv_result(df_evv_train, df_evv_test, ft_names, th)
+    er_bps_train, er_bps_test = [], []
+    for ft_name in ft_names
+        sl_train, ss_train = get_signals(df_evv_train[!, ft_name], th)
+        plt_train, tr_res_vec_train = backtest_sica_2(sl_train, ss_train, df_train.WAP_Lag_200ms, df_train.WAP_Lag_0ms, df_train.timestamp, is_print=false)
+        er_bp_train = mean([10_000 * tr[6] / tr[4] for tr in tr_res_vec_train])
+        push!(er_bps_train, er_bp_train)
+    
+        sl_test, ss_test = get_signals(df_evv_test[!, ft_name], th)
+        plt_test, tr_res_vec_test = backtest_sica_2(sl_test, ss_test, df_test.WAP_Lag_200ms, df_test.WAP_Lag_0ms, df_test.timestamp, is_print=false)
+        er_bp_test = mean([10_000 * tr[6] / tr[4] for tr in tr_res_vec_test])
+        push!(er_bps_test, er_bp_test)
+    end
+    
+    sl_train, ss_train = get_signals(df_evv_train.equal_weight_sum, th)
+    plt_train, tr_res_vec_train = backtest_sica_2(sl_train, ss_train, df_train.WAP_Lag_200ms, df_train.WAP_Lag_0ms, df_train.timestamp, is_print=false)
+    er_bp_train = mean([10_000 * tr[6] / tr[4] for tr in tr_res_vec_train])
+    push!(er_bps_train, er_bp_train)
+    
+    sl_test, ss_test = get_signals(df_evv_test.equal_weight_sum, th)
+    plt_test, tr_res_vec_test = backtest_sica_2(sl_test, ss_test, df_test.WAP_Lag_200ms, df_test.WAP_Lag_0ms, df_test.timestamp, is_print=false)
+    er_bp_test = mean([10_000 * tr[6] / tr[4] for tr in tr_res_vec_test])
+    push!(er_bps_test, er_bp_test)
+    
+    
+    train_bps_str = join(string.(round.(er_bps_train[1 : end-1], digits=2)), ", ")
+    test_bps_str = join(string.(round.(er_bps_test[1 : end-1], digits=2)), ", ")
+    println("th: $th  $(join(ft_names, "  "))")
+    println("Train : [$(train_bps_str)] -> $(round(er_bps_train[end], digits=2))")
+    println("Test  : [$(test_bps_str)] -> $(round(er_bps_test[end], digits=2))")
+end
 
 
 
