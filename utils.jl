@@ -152,6 +152,7 @@ function rolling_ema_std(data_vec::AbstractVector, span::Int; padding_value=0.0)
 end
 
 function ema_norm(feature, l1, l2)
+    feature[isnan.(feature)] .= 0.0
     ema_short = rolling_ema(feature, l1, padding_value=0.0)
     ema_long = rolling_ema(feature, l2, padding_value=0.0)
     ema_std = rolling_ema_std(feature, l2, padding_value=0.0)
@@ -1176,6 +1177,32 @@ function get_at_time_profile(ft, wap, win, idx_at_list)
 end
 
 
+function get_at_time_profile2(ft, wap, win, idx_at_list)
+    fvs2d = [fill(NaN, length(idx_at_list)) for i in 1:2*win+1]
+    waps2d = [fill(NaN, length(idx_at_list)) for i in 1:2*win+1]
+    for (i, idx_at) in enumerate(idx_at_list)
+        i0 = idx_at - win
+        i1 = idx_at + win
+        if i0 < 1 || i1 > length(wap) continue end
+        for ii2 in i0:i1
+            i2 = 1 + ii2 - i0
+            fvs2d[i2][i] = (ft[ii2] - ft[idx_at])
+            waps2d[i2][i] = 10_000 * (wap[ii2] - wap[idx_at]) / wap[idx_at]
+        end
+    end
+
+    avg_fvs, avg_waps = fill(NaN, 2*win+1), fill(NaN, 2*win+1)
+    median_fvs, median_waps = fill(NaN, 2*win+1), fill(NaN, 2*win+1)
+    for i in 1 : 2*win+1
+        avg_fvs[i] = mean(skipnan(fvs2d[i][i2] for i2 in 1:length(idx_at_list)))
+        avg_waps[i] = mean(skipnan(waps2d[i][i2] for i2 in 1:length(idx_at_list)))
+        median_fvs[i] = median(skipnan(fvs2d[i][i2] for i2 in 1:length(idx_at_list)))
+        median_waps[i] = median(skipnan(waps2d[i][i2] for i2 in 1:length(idx_at_list)))
+    end
+    return avg_fvs, avg_waps, median_fvs, median_waps
+end
+
+
 function get_quantile_value(sorted_x, th)
     # @assert 0.0 <= th <= 100
     idx = 1 + Int64(((length(sorted_x) - 1) * (th / 100.0)) ÷ 1)
@@ -1476,14 +1503,39 @@ end
 function get_evv_df(ft_gen_map, ret_col_name, th_vec)
     ft_map = Dict()
     for (ft_name, ft_generator) in ft_gen_map
+        # println("generate $(ft_name)")
         ft_map[ft_name] = (ft_generator(df_train), ft_generator(df_test))
     end
 
     tb_info_map = Dict()
     ret_bp = df_train[!, ret_col_name]
     for (ft_name, ft_tuple) in ft_map
+        # println("$(ft_name)")
         tb_info_map[ft_name] = get_ev_info(ft_tuple[1], ret_bp, th_vec)
     end
+
+    df_evv_train, df_evv_test = DataFrame(), DataFrame()
+    for ft_name in keys(ft_map)
+        tb_info = tb_info_map[ft_name]
+        df_evv_train[!, ft_name] = get_wsv_parallel(tb_info, ft_map[ft_name][1])
+        df_evv_test[!, ft_name] = get_wsv_parallel(tb_info, ft_map[ft_name][2])
+    end
+
+    # 모든 feature들의 동일가중 평균 계산
+    df_evv_train[!, "equal_weight_sum"] .= sum(df_evv_train[!, ft_name] for ft_name in keys(ft_map)) ./ length(ft_map)
+    df_evv_test[!, "equal_weight_sum"] .= sum(df_evv_test[!, ft_name] for ft_name in keys(ft_map)) ./ length(ft_map)
+
+    return df_evv_train, df_evv_test
+end
+
+
+function get_evv_df_fast(ft_gen_map, ret_col_name, th_vec)
+    ft_tasks = [Threads.@spawn (ft_name, ft_generator(df_train), ft_generator(df_test)) for (ft_name, ft_generator) in ft_gen_map]
+    ft_map = Dict(task_result[1] => (task_result[2], task_result[3]) for task_result in fetch.(ft_tasks))
+
+    ret_bp = df_train[!, ret_col_name]
+    tb_info_tasks = [Threads.@spawn (ft_name, get_ev_info(ft_tuple[1], ret_bp, th_vec)) for (ft_name, ft_tuple) in ft_map]
+    tb_info_map = Dict(fetch(task)[1] => fetch(task)[2] for task in tb_info_tasks)
 
     df_evv_train, df_evv_test = DataFrame(), DataFrame()
     for ft_name in keys(ft_map)
@@ -1556,14 +1608,100 @@ function summary_evv_result(df_evv_train, df_evv_test, ft_names, th)
     plt_test, tr_res_vec_test = backtest_sica_2(sl_test, ss_test, df_test.WAP_Lag_200ms, df_test.WAP_Lag_0ms, df_test.timestamp, is_print=false)
     er_bp_test = mean([10_000 * tr[6] / tr[4] for tr in tr_res_vec_test])
     push!(er_bps_test, er_bp_test)
-    
-    
+        
     train_bps_str = join(string.(round.(er_bps_train[1 : end-1], digits=2)), ", ")
     test_bps_str = join(string.(round.(er_bps_test[1 : end-1], digits=2)), ", ")
     println("th: $th  $(join(ft_names, "  "))")
-    println("Train : [$(train_bps_str)] -> $(round(er_bps_train[end], digits=2))")
-    println("Test  : [$(test_bps_str)] -> $(round(er_bps_test[end], digits=2))")
+    println("Train : [$(train_bps_str)] -> $(round(er_bps_train[end], digits=2)) ($(length(tr_res_vec_train)) tr)")
+    println("Test  : [$(test_bps_str)] -> $(round(er_bps_test[end], digits=2)) ($(length(tr_res_vec_test)) tr)")
 end
+
+
+function view_norm_ret_path_by_df_evv(th, df_evv_train, df_evv_test; er_name="equal_weight_sum")
+    sl_train, ss_train = get_signals(df_evv_train[!, er_name], th)
+    plt_train, tr_res_vec_train = backtest_sica_2(sl_train, ss_train, df_train.WAP_Lag_200ms, df_train.WAP_Lag_0ms, df_train.timestamp, is_print=false)
+    er_bp_train = mean(10_000 * tr[6] / tr[4] for tr in tr_res_vec_train)
+    
+    sl_test, ss_test = get_signals(df_evv_test[!, er_name], th)
+    plt_test, tr_res_vec_test = backtest_sica_2(sl_test, ss_test, df_test.WAP_Lag_200ms, df_test.WAP_Lag_0ms, df_test.timestamp, is_print=false)
+    er_bp_test = mean(10_000 * tr[6] / tr[4] for tr in tr_res_vec_test)
+
+    wap_train = df_train.WAP_Lag_0ms
+    avg_norm_paths, median_norm_paths = get_norm_ret_bp_path(tr_res_vec_train, wap_train)
+    plt_train = plot(avg_norm_paths, label="avg")
+    plot!(plt_train, median_norm_paths, label="median")
+    title!(plt_train, "Train - dr: $(round(er_bp_train, digits=3))bp")
+    # display(plt_train)
+
+    wap_test = df_test.WAP_Lag_0ms
+    avg_norm_paths, median_norm_paths = get_norm_ret_bp_path(tr_res_vec_test, wap_test)
+    plt_test = plot(avg_norm_paths, label="avg")
+    plot!(plt_test, median_norm_paths, label="median")
+    title!(plt_test, "Test - dr: $(round(er_bp_test, digits=3))bp")
+    # display(plt_test)
+
+    plt_total = plot(plt_train, plt_test, layout=(2, 1), plot_title="Norm Ret(bp) th: $(th)")
+    display(plt_total)
+    return plt_total
+end
+
+
+function get_tr_res_vecs_by_dfs(th, df_train, df_evv_train, df_test, df_evv_test, er_name="equal_weight_sum")
+    sl_train, ss_train = get_signals(df_evv_train[!, er_name], th)
+    _plt_train, tr_res_vec_train = backtest_sica_2(sl_train, ss_train, df_train.WAP_Lag_200ms, df_train.WAP_Lag_0ms, df_train.timestamp, is_print=false)
+    
+    sl_test, ss_test = get_signals(df_evv_test[!, er_name], th)
+    _plt_test, tr_res_vec_test = backtest_sica_2(sl_test, ss_test, df_test.WAP_Lag_200ms, df_test.WAP_Lag_0ms, df_test.timestamp, is_print=false)
+
+    return tr_res_vec_train, tr_res_vec_test
+end
+
+
+function get_plt_total_by_tr_res_vec(tr_res_vec, category, feature, wap, win)
+    ial_in_l = [tr[1] for tr in tr_res_vec if tr[3] > 0]
+    ial_out_l = [tr[2] for tr in tr_res_vec if tr[3] > 0]
+    ial_in_s = [tr[1] for tr in tr_res_vec if tr[3] < 0]
+    ial_out_s = [tr[2] for tr in tr_res_vec if tr[3] < 0]
+
+    profiles_in_l = get_at_time_profile2(feature, wap, win, ial_in_l)
+    profiles_out_l = get_at_time_profile2(feature, wap, win, ial_out_l)
+    profiles_in_s = get_at_time_profile2(feature, wap, win, ial_in_s)
+    profiles_out_s = get_at_time_profile2(feature, wap, win, ial_out_s)
+
+    p_in_l = plot(-win:win, profiles_in_l[2], label="avg wap")
+    scatter!(p_in_l, [0], [0])
+    plot!(twinx(p_in_l), -win:win, profiles_in_l[1], label="avg fv", color=:gray, linestyle=:dot)
+    title!(p_in_l, "In - Long")
+    
+    p_in_s = plot(-win:win, profiles_in_s[2], label="avg wap")
+    scatter!(p_in_s, [0], [0])
+    plot!(twinx(p_in_s), -win:win, profiles_in_s[1], label="avg fv", color=:gray, linestyle=:dot)
+    title!(p_in_s, "In - Short")
+    
+    p_out_l = plot(-win:win, profiles_out_l[2], label="avg wap")
+    scatter!(p_out_l, [0], [0])
+    plot!(twinx(p_out_l), -win:win, profiles_out_l[1], label="avg fv", color=:gray, linestyle=:dot)
+    title!(p_out_l, "Out - Long")
+    
+    p_out_s = plot(-win:win, profiles_out_s[2], label="avg wap")
+    scatter!(p_out_s, [0], [0])
+    plot!(twinx(p_out_s), -win:win, profiles_out_s[1], label="avg fv", color=:gray, linestyle=:dot)
+    title!(p_out_s, "Out - Short")
+
+    plt_total = plot(p_in_l, p_out_l, p_in_s, p_out_s, layout=(2, 2), legend=false, plot_title=category)
+    return plt_total
+end
+
+
+
+
+
+
+
+
+
+
+
 
 
 

@@ -5,7 +5,7 @@ include("utils.jl")
 include("feature_generator/feature_generator.jl")
 
 date_list_train = [
-    [string(di) for di in 20230313:20230331]; 
+    # [string(di) for di in 20230313:20230331]; 
     [string(di) for di in 20230401:20230430];
     [string(di) for di in 20230501:20230531]
     ]
@@ -30,13 +30,60 @@ set_ret_bp(df_test, ret_interval)
 ret_col_name = "ret_bp"
 th_vec = [(0.1:0.1:0.9); Float64.(1:99); (99.1:0.1:99.9)]
 
-ft_gen_map = Dict(
-    "ofi" => ft_gen_ofi,
-    "aq" => ft_gen_aq,
-)
-ft_names = collect(keys(ft_map))
+begin
+    println("--------------------------------------------\n")
+    ft_gen_map = Dict(
+        "ofi" => ft_gen_ofi,
+        "aq" => ft_gen_aq,
+        "tor" => ft_gen_tor,
+        "tv" => ft_gen_tv,
+        "index_dist" => ft_gen_index_dist,
+        "mark_dist" => ft_gen_mark_dist,
+        "trade_cnt_ratio" => ft_gen_trcr,
+        "trade_vol" => ft_gen_trv,
+        "liquidation" => ft_gen_liqu,
+        "vwap" => ft_gen_vwap,
+    )
+    ft_names = collect(keys(ft_gen_map))
 
-df_evv_train, df_evv_test = get_evv_df(ft_gen_map, ret_col_name, th_vec)
+    # df_evv_train, df_evv_test = get_evv_df(ft_gen_map, ret_col_name, th_vec)
+    df_evv_train, df_evv_test = get_evv_df_fast(ft_gen_map, ret_col_name, th_vec)
+    for th in [0.025, 0.05, 0.1, 0.5, 1.0, 5.0]
+        summary_evv_result(df_evv_train, df_evv_test, ft_names, th)
+    end
+end
+
+
+win = 300
+th = 0.025
+th = 0.05
+th = 0.1
+th = 0.5
+th = 1.0
+
+plt_norm_ret = view_norm_ret_path_by_df_evv(th, df_evv_train, df_evv_test)
+tr_res_vec_train, tr_res_vec_test = get_tr_res_vecs_by_dfs(th, df_train, df_evv_train, df_test, df_evv_test)
+
+plt_total_train = get_plt_total_by_tr_res_vec(tr_res_vec_train, "Train", df_evv_train[!, "equal_weight_sum"], df_train[!, "WAP_Lag_0ms"], win)
+plt_total_test = get_plt_total_by_tr_res_vec(tr_res_vec_test, "Test", df_evv_test[!, "equal_weight_sum"], df_test[!, "WAP_Lag_0ms"], win)
+
+
+begin
+    sl_train, ss_train = get_signals(df_evv_train[!, "equal_weight_sum"], th)
+    plt_train, tr_res_vec_train = backtest_sica_2(sl_train, ss_train, df_train.WAP_Lag_200ms, df_train.WAP_Lag_0ms, df_train.timestamp, is_display=true)
+end
+
+begin
+    sl_test, ss_test = get_signals(df_evv_test[!, "equal_weight_sum"], th)
+    plt_test, tr_res_vec_test = backtest_sica_2(sl_test, ss_test, df_test.WAP_Lag_200ms, df_test.WAP_Lag_0ms, df_test.timestamp, is_display=true)
+end
+
+
+
+
+
+
+
 
 
 # 예시: 단순 가중치 적용
