@@ -4,26 +4,27 @@ include("const.jl")
 include("utils.jl")
 include("feature_generator/feature_generator.jl")
 
-date_list_train = [
-    # [string(di) for di in 20230313:20230331]; 
-    [string(di) for di in 20230401:20230430];
-    [string(di) for di in 20230501:20230531]
-    ]
+begin
+    date_list_train = [
+        # [string(di) for di in 20230313:20230331]; 
+        [string(di) for di in 20230401:20230430];
+        [string(di) for di in 20230501:20230531]
+        ]
+    df_list = [get_df_oneday_full(tardis_dir, s7_dir, symbol, date_one_day, features) for date_one_day in date_list_train]
+    df_train = vcat(df_list...)
+    set_ret_bp(df_train, ret_interval)
+end
 
-df_list = [get_df_oneday_full(tardis_dir, s7_dir, symbol, date_one_day, features) for date_one_day in date_list_train]
-df_train = vcat(df_list...)
-set_ret_bp(df_train, ret_interval)
+begin
+    date_list_test = [
+        [string(di) for di in 20230525:20230531];
+        [string(di) for di in 20230601:20230630]
+        ]
 
-
-date_list_test = [
-    [string(di) for di in 20230525:20230531];
-    [string(di) for di in 20230601:20230630]
-    ]
-
-df_list2 = [get_df_oneday_full(tardis_dir, s7_dir, symbol, date_one_day, features) for date_one_day in date_list_test]
-df_test = vcat(df_list2...)
-set_ret_bp(df_test, ret_interval)
-
+    df_list2 = [get_df_oneday_full(tardis_dir, s7_dir, symbol, date_one_day, features) for date_one_day in date_list_test]
+    df_test = vcat(df_list2...)
+    set_ret_bp(df_test, ret_interval)
+end
 
 ################## from map
 
@@ -39,15 +40,15 @@ begin
         "tv" => ft_gen_tv,
         "index_dist" => ft_gen_index_dist,
         "mark_dist" => ft_gen_mark_dist,
-        "trade_cnt_ratio" => ft_gen_trcr,
-        "trade_vol" => ft_gen_trv,
+        # "trade_cnt_ratio" => ft_gen_trcr,
+        # "trade_vol" => ft_gen_trv,
         "liquidation" => ft_gen_liqu,
         "vwap" => ft_gen_vwap,
     )
     ft_names = collect(keys(ft_gen_map))
 
     # df_evv_train, df_evv_test = get_evv_df(ft_gen_map, ret_col_name, th_vec)
-    df_evv_train, df_evv_test = get_evv_df_fast(ft_gen_map, ret_col_name, th_vec)
+    df_evv_train, df_evv_test = get_evv_df_fast2(ft_gen_map, ret_col_name, th_vec)
     for th in [0.025, 0.05, 0.1, 0.5, 1.0, 5.0]
         summary_evv_result(df_evv_train, df_evv_test, ft_names, th)
     end
@@ -77,6 +78,65 @@ begin
     sl_test, ss_test = get_signals(df_evv_test[!, "equal_weight_sum"], th)
     plt_test, tr_res_vec_test = backtest_sica_2(sl_test, ss_test, df_test.WAP_Lag_200ms, df_test.WAP_Lag_0ms, df_test.timestamp, is_display=true)
 end
+
+
+
+coef_lr_train = get_lr_coef(df_evv_train, df_train.ret_bp)
+yhat_lr_train = calc_er_vec_by_coef(df_evv_train, coef_lr_train)
+begin
+    sl_lr, ss_lr = get_signals(yhat_lr_train, th)
+    plt, tr_res_vec_train = backtest_sica_2(sl_lr, ss_lr, df_train[!, :WAP_Lag_200ms], df_train[!, :WAP_Lag_0ms], df_train[!, :timestamp], is_display=false)
+    title!(plt, "Linear Reg - Train")
+    display(plt)
+end
+
+
+coef_lr_test = get_lr_coef(df_evv_test, df_test.ret_bp)
+yhat_lr_test = calc_er_vec_by_coef(df_evv_test, coef_lr_test)
+begin
+    sl_lr, ss_lr = get_signals(yhat_lr_test, th)
+    plt, tr_res_vec_test = backtest_sica_2(sl_lr, ss_lr, df_test[!, :WAP_Lag_200ms], df_test[!, :WAP_Lag_0ms], df_test[!, :timestamp], is_display=false)
+    title!(plt, "Linear Reg - Test")
+    display(plt)
+end
+
+
+begin
+    wap = df_train.WAP_Lag_0ms
+    avg_norm_paths, median_norm_paths = get_norm_ret_bp_path(tr_res_vec_train, wap)
+    plt_test = plot(avg_norm_paths, label="avg")
+    plot!(plt_test, median_norm_paths, label="median")
+    title!(plt_test, "Train")
+end
+
+begin
+    wap = df_test.WAP_Lag_0ms
+    avg_norm_paths, median_norm_paths = get_norm_ret_bp_path(tr_res_vec_test, wap)
+    plt_test = plot(avg_norm_paths, label="avg")
+    plot!(plt_test, median_norm_paths, label="median")
+    title!(plt_test, "Test")
+end
+
+plt_total_train = get_plt_total_by_tr_res_vec(tr_res_vec, "Train", yhat_lr_train, df_train[!, "WAP_Lag_0ms"], win)
+plt_total_test = get_plt_total_by_tr_res_vec(tr_res_vec, "Test", yhat_lr_test, df_test[!, "WAP_Lag_0ms"], win)
+
+
+
+# 내일 할 일
+# 1. 레짐 나눠서 해보자 
+# 2. 심볼별로 확장 
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

@@ -13,6 +13,13 @@ using CodecZstd
 using Serialization
 using Dates
 using RollingFunctions
+using Memoization
+using MLJ
+using MLJLinearModels
+using LinearAlgebra
+using LinearAlgebra.BLAS
+using BenchmarkTools
+
 
 
 
@@ -1203,7 +1210,7 @@ function get_at_time_profile2(ft, wap, win, idx_at_list)
 end
 
 
-function get_quantile_value(sorted_x, th)
+@memoize function get_quantile_value(sorted_x, th)
     # @assert 0.0 <= th <= 100
     idx = 1 + Int64(((length(sorted_x) - 1) * (th / 100.0)) ÷ 1)
     # @assert idx <= length(sorted_x)
@@ -1221,10 +1228,9 @@ end
 function get_ev_info(X, ret_bp, th_vec)
     mask = .!isnan.(X) .& .!isnan.(ret_bp)
     sorted_x = sort(X[mask])
+    qvv = [get_quantile_value(sorted_x, th) for th in th_vec]
     tb_info = []
-    for (th1, th2) in zip(th_vec[1:end-1], th_vec[2:end])
-        qv1 = get_quantile_value(sorted_x, th1)
-        qv2 = get_quantile_value(sorted_x, th2)
+    for (qv1, qv2) in zip(qvv[1:end-1], qvv[2:end])
         msk = qv1 .<= X .<= qv2
         avg = mean(skipnan(ret_bp[msk]))
         push!(tb_info, (qv1, qv2, avg))
@@ -1552,6 +1558,25 @@ function get_evv_df_fast(ft_gen_map, ret_col_name, th_vec)
 end
 
 
+function get_evv_df_fast2(ft_gen_map, ret_col_name, th_vec)
+    ret_bp = df_train[!, ret_col_name]
+    df_evv_train, df_evv_test = DataFrame(), DataFrame()
+    @threads for ft_name in collect(keys(ft_gen_map))
+        ft_train = ft_gen_map[ft_name](df_train)
+        ft_test = ft_gen_map[ft_name](df_test)
+        tb_info = get_ev_info(ft_train, ret_bp, th_vec)
+        df_evv_train[!, ft_name] = get_wsv_parallel(tb_info, ft_train)
+        df_evv_test[!, ft_name] = get_wsv_parallel(tb_info, ft_test)
+    end
+
+    # 모든 feature들의 동일가중 평균 계산
+    df_evv_train[!, "equal_weight_sum"] .= sum(df_evv_train[!, ft_name] for ft_name in keys(ft_gen_map)) ./ length(ft_gen_map)
+    df_evv_test[!, "equal_weight_sum"] .= sum(df_evv_test[!, ft_name] for ft_name in keys(ft_gen_map)) ./ length(ft_gen_map)
+
+    return df_evv_train, df_evv_test
+end
+
+
 # 단순 가중평균 계산 함수
 function calc_weighted_sum(df_evv, weights_dict)
     weighted_sum = zeros(size(df_evv, 1))
@@ -1693,9 +1718,28 @@ function get_plt_total_by_tr_res_vec(tr_res_vec, category, feature, wap, win)
 end
 
 
+function get_lr_coef(df_evv, ret_bp)
+    matrix_reg = hcat(Matrix(df_evv), ret_bp)
+    keep_rows = .!any(isnan.(matrix_reg), dims=2)[:]
+    lr = @load LinearRegressor pkg=MLJLinearModels
+    lrm = lr()
+    mach_lr = machine(lrm, df_evv[keep_rows, :], ret_bp[keep_rows])
+    fit!(mach_lr)
+    coef_lr = fitted_params(mach_lr)
+    return coef_lr
+end
 
 
-
+function calc_er_vec_by_coef(df_evv, coef)
+    ft_name_vec::Vector{Symbol} = []
+    coef_vec::Vector{Float64} = []
+    for (ft_name, cf_value) in coef.coefs
+        push!(ft_name_vec, ft_name)
+        push!(coef_vec, cf_value)
+    end
+    x_matrix = Matrix(df_evv[!, ft_name_vec])
+    return x_matrix * coef_vec .+ coef.intercept
+end
 
 
 
