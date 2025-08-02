@@ -5,7 +5,7 @@ include("setup.jl")
 
 
 symbol_list = get_symbol_list(um_path)
-for symbol in get_symbol_list(um_path)
+@threads for symbol in get_symbol_list(um_path)
     data_type = "aggTrades"
     file_list = get_file_list(um_path, symbol, data_type)
     for (i, file_name) in enumerate(file_list)
