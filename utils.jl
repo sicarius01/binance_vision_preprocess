@@ -949,7 +949,7 @@ end
 
 
 function get_df_oneday_full(tardis_dir, s7_dir, symbol, date, features)
-    println("$(symbol) - $(date)")
+    # println("$(symbol) - $(date)")
     deri_dir = joinpath(tardis_dir, "binance-futures", "derivative_ticker", symbol)
     liqu_dir = joinpath(tardis_dir, "binance-futures", "liquidations", symbol)
 
@@ -1906,9 +1906,10 @@ function calc_multi_regime_based_er_vec(rg_info_map, df_evv, mask_symbol; defaul
         df_regime = df_evv[mask, :]
         
         for (ft_name, coef_val) in coef.coefs
-            if occursin("_weight_sum", string(ft_name)) continue end
+            if occursin("_weight_sum", string(ft_name)) || string(ft_name) == "timestamp" continue end
             for sb in symbols
-                prediction .+= df_regime[!, "$(sb)__$(ft_name)"] .* coef_val
+                # prediction .+= df_regime[!, "$(sb)__$(ft_name)"] .* coef_val
+                prediction .+= df_regime[!, ft_name] .* coef_val
             end
         end
         

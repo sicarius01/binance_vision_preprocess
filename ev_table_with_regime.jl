@@ -48,7 +48,7 @@ begin
         "vwap" => ft_gen_vwap,
     )
     ft_names = collect(keys(ft_gen_map))
-    regime_ft_gen_map = Dict("ttc" => (ft_gen_ttc, [0.4, 0.8]), "doi" => (ft_gen_doi, [0.1, 0.9]))
+    regime_ft_gen_map = Dict("ttc" => (ft_gen_ttc, [0.4, 0.8]), "doi" => (ft_gen_doi, [0.1, 0.5, 0.9]))
 
     df_evv_train, df_evv_test = get_evv_df_fast2(df_train, df_test, ft_gen_map, df_train.ret_bp, th_vec)
     
