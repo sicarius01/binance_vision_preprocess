@@ -48,7 +48,7 @@ begin
     ft_names = collect(keys(ft_gen_map))
 
     # df_evv_train, df_evv_test = get_evv_df(ft_gen_map, ret_col_name, th_vec)
-    df_evv_train, df_evv_test = get_evv_df_fast2(ft_gen_map, ret_col_name, th_vec)
+    df_evv_train, df_evv_test = get_evv_df_fast2(df_train, df_test, ft_gen_map, df_train.ret_bp, th_vec)
     for th in [0.025, 0.05, 0.1, 0.5, 1.0, 5.0]
         summary_evv_result(df_evv_train, df_evv_test, ft_names, th)
     end
@@ -91,8 +91,8 @@ begin
 end
 
 
-coef_lr_test = get_lr_coef(df_evv_test, df_test.ret_bp)
-yhat_lr_test = calc_er_vec_by_coef(df_evv_test, coef_lr_test)
+# coef_lr_test = get_lr_coef(df_evv_test, df_test.ret_bp)
+yhat_lr_test = calc_er_vec_by_coef(df_evv_test, coef_lr_train)
 begin
     sl_lr, ss_lr = get_signals(yhat_lr_test, th)
     plt, tr_res_vec_test = backtest_sica_2(sl_lr, ss_lr, df_test[!, :WAP_Lag_200ms], df_test[!, :WAP_Lag_0ms], df_test[!, :timestamp], is_display=false)
@@ -117,8 +117,8 @@ begin
     title!(plt_test, "Test")
 end
 
-plt_total_train = get_plt_total_by_tr_res_vec(tr_res_vec, "Train", yhat_lr_train, df_train[!, "WAP_Lag_0ms"], win)
-plt_total_test = get_plt_total_by_tr_res_vec(tr_res_vec, "Test", yhat_lr_test, df_test[!, "WAP_Lag_0ms"], win)
+plt_total_train = get_plt_total_by_tr_res_vec(tr_res_vec_train, "Train", yhat_lr_train, df_train[!, "WAP_Lag_0ms"], win)
+plt_total_test = get_plt_total_by_tr_res_vec(tr_res_vec_test, "Test", yhat_lr_test, df_test[!, "WAP_Lag_0ms"], win)
 
 
 
@@ -127,6 +127,7 @@ plt_total_test = get_plt_total_by_tr_res_vec(tr_res_vec, "Test", yhat_lr_test, d
 # 2. 심볼별로 확장 
 
 
+# 1. feature for regime divide (trade count, diff of open interest)
 
 
 
@@ -146,13 +147,14 @@ plt_total_test = get_plt_total_by_tr_res_vec(tr_res_vec, "Test", yhat_lr_test, d
 
 
 
-# 예시: 단순 가중치 적용
-weights = Dict(
-    "ofi" => 0.7,
-    "aq" => 0.3
-)
-df_evv_train[!, "weighted_sum"] = calc_weighted_sum(df_evv_train, weights)
-df_evv_test[!, "weighted_sum"] = calc_weighted_sum(df_evv_test, weights)
+
+
+
+
+weights = Dict(cf[1] => cf[2] for cf in coef_lr_train.coefs)
+df_evv_train[!, "weighted_sum"] = calc_weighted_sum(df_evv_train, weights, coef_lr_train.intercept)
+df_evv_test[!, "weighted_sum"] = calc_weighted_sum(df_evv_test, weights, coef_lr_train.intercept)
+
 
 # 예시: 레짐별 가중치 적용
 # 레짐은 예를 들어 변동성이나 거래량 등에 따라 정의할 수 있음

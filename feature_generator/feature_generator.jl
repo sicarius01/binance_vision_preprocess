@@ -89,3 +89,19 @@ end
 
 
 
+
+
+function ft_gen_ttc(df)
+    return df[!, "TickFlow_total_count"]
+end
+
+function ft_gen_doi(df)
+    doi = [NaN; abs.(diff(df[!, "open_interest"]))]
+    ft = ema_norm(doi, 10, 60)
+    return ft
+end
+
+
+
+
+

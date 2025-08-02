@@ -19,7 +19,7 @@ using MLJLinearModels
 using LinearAlgebra
 using LinearAlgebra.BLAS
 using BenchmarkTools
-
+using DataStructures
 
 
 
@@ -949,6 +949,7 @@ end
 
 
 function get_df_oneday_full(tardis_dir, s7_dir, symbol, date, features)
+    println("$(symbol) - $(date)")
     deri_dir = joinpath(tardis_dir, "binance-futures", "derivative_ticker", symbol)
     liqu_dir = joinpath(tardis_dir, "binance-futures", "liquidations", symbol)
 
@@ -1558,8 +1559,8 @@ function get_evv_df_fast(ft_gen_map, ret_col_name, th_vec)
 end
 
 
-function get_evv_df_fast2(ft_gen_map, ret_col_name, th_vec)
-    ret_bp = df_train[!, ret_col_name]
+function get_evv_df_fast2(df_train, df_test, ft_gen_map, ret_bp, th_vec; is_calc_lr=true)
+    # ret_bp = df_train[!, ret_col_name]
     df_evv_train, df_evv_test = DataFrame(), DataFrame()
     @threads for ft_name in collect(keys(ft_gen_map))
         ft_train = ft_gen_map[ft_name](df_train)
@@ -1572,21 +1573,29 @@ function get_evv_df_fast2(ft_gen_map, ret_col_name, th_vec)
     # 모든 feature들의 동일가중 평균 계산
     df_evv_train[!, "equal_weight_sum"] .= sum(df_evv_train[!, ft_name] for ft_name in keys(ft_gen_map)) ./ length(ft_gen_map)
     df_evv_test[!, "equal_weight_sum"] .= sum(df_evv_test[!, ft_name] for ft_name in keys(ft_gen_map)) ./ length(ft_gen_map)
+    
+    is_calc_lr && calc_weighted_sum(df_train, df_evv_train, df_evv_test)
 
     return df_evv_train, df_evv_test
 end
 
 
-# 단순 가중평균 계산 함수
-function calc_weighted_sum(df_evv, weights_dict)
-    weighted_sum = zeros(size(df_evv, 1))
-    total_weight = sum(values(weights_dict))
+function calc_weighted_sum(df_train, df_evv_train, df_evv_test; res_col_name="lin_reg_weight_sum")
+    coef_lr_train = get_lr_coef(df_evv_train, df_train.ret_bp)
+    weights = Dict(cf[1] => cf[2] for cf in coef_lr_train.coefs)
+    df_evv_train[!, res_col_name] = calc_linear_prediction(df_evv_train, weights, coef_lr_train.intercept)
+    df_evv_test[!, res_col_name] = calc_linear_prediction(df_evv_test, weights, coef_lr_train.intercept)
+end
+
+
+function calc_linear_prediction(df_evv, coef_dict, intercept)
+    prediction = fill(intercept, size(df_evv, 1))
     
-    for (ft_name, weight) in weights_dict
-        weighted_sum .+= df_evv[!, ft_name] .* (weight / total_weight)
+    for (ft_name, coef) in coef_dict
+        prediction .+= df_evv[!, ft_name] .* coef
     end
     
-    return weighted_sum
+    return prediction
 end
 
 # 레짐별 가중평균 계산 함수 
@@ -1655,14 +1664,14 @@ function view_norm_ret_path_by_df_evv(th, df_evv_train, df_evv_test; er_name="eq
     avg_norm_paths, median_norm_paths = get_norm_ret_bp_path(tr_res_vec_train, wap_train)
     plt_train = plot(avg_norm_paths, label="avg")
     plot!(plt_train, median_norm_paths, label="median")
-    title!(plt_train, "Train - dr: $(round(er_bp_train, digits=3))bp")
+    title!(plt_train, "Train - er: $(round(er_bp_train, digits=3))bp")
     # display(plt_train)
 
     wap_test = df_test.WAP_Lag_0ms
     avg_norm_paths, median_norm_paths = get_norm_ret_bp_path(tr_res_vec_test, wap_test)
     plt_test = plot(avg_norm_paths, label="avg")
     plot!(plt_test, median_norm_paths, label="median")
-    title!(plt_test, "Test - dr: $(round(er_bp_test, digits=3))bp")
+    title!(plt_test, "Test - er: $(round(er_bp_test, digits=3))bp")
     # display(plt_test)
 
     plt_total = plot(plt_train, plt_test, layout=(2, 1), plot_title="Norm Ret(bp) th: $(th)")
@@ -1742,7 +1751,241 @@ function calc_er_vec_by_coef(df_evv, coef)
 end
 
 
+"""
+feature_for_regime_divide 로 레짐을 나누고 그 벡터를 반환한다
+regime 벡터를 1, 2, 3, ...으로 채운다
+quantile th 는 0 ~ 1.0 값을 받고, 하위 비율로 계산
+quantile th 값이 0.4 라면, 하위 40%, 상위 60%를 나눔 
+"""
+function get_regime_vec(feature_for_regime_divide, regime_quantile_th_vec) # 이거 test에서는 못씀
+    regime_vec = fill(1, length(feature_for_regime_divide))
+    for (regime_num, regime_th) in enumerate(regime_quantile_th_vec)
+        mask = feature_for_regime_divide .>= quantile(skipnan(feature_for_regime_divide), regime_th)
+        regime_vec[mask] .= regime_num + 1
+    end
+    return regime_vec
+end
 
+
+function get_regime_th_values_by_quantile_th(feature_for_regime_divide, regime_quantile_th_vec)
+    res = []
+    for regime_th in regime_quantile_th_vec
+        push!(res, quantile(skipnan(feature_for_regime_divide), regime_th))
+    end
+    return res
+end
+
+
+function get_regime_vec_by_th_values(feature_for_regime_divide, regime_th_values)
+    regime_vec = fill(1, length(feature_for_regime_divide))
+    for (regime_num, regime_th_value) in enumerate(regime_th_values)
+        mask = feature_for_regime_divide .>= regime_th_value
+        regime_vec[mask] .= regime_num + 1
+    end
+    return regime_vec
+end
+
+
+function get_all_combinations(unique_vals)
+    if isempty(unique_vals)
+        return []
+    elseif length(unique_vals) == 1
+        return [(val,) for val in unique_vals[1]]
+    else
+        combinations = []
+        for combo in get_all_combinations(unique_vals[2:end])
+            for val in unique_vals[1]
+                push!(combinations, (val, combo...))
+            end
+        end
+        return combinations
+    end
+end
+
+
+"""
+특정 regime 조합에 해당하는 데이터의 마스크를 구하는 함수
+"""
+function get_regime_mask(rv_train, regime_combination)
+    n_rows = length(rv_train[1])
+    mask = fill(true, n_rows)
+    
+    for (i, regime_val) in enumerate(regime_combination)
+        mask .&= (rv_train[i] .== regime_val)
+    end
+    
+    return mask
+end
+
+"""
+모든 regime 조합에 대한 마스크를 한번에 구하는 함수
+"""
+function get_all_regime_masks(rv_train, all_combinations)
+    regime_masks = Dict()
+    
+    for combo in all_combinations
+        mask = get_regime_mask(rv_train, combo)
+        regime_masks[combo] = mask
+    end
+    
+    return regime_masks
+end
+
+
+function get_regime_coef_map(df_evv_train, ret_bp_train, rg_mask_map_train; min_samples=100, is_print=false)
+    rg_coef_map = Dict()
+    feature_names = names(df_evv_train)
+    equal_weight = 1.0 / length(feature_names)
+    
+    for (regime_combo, mask) in rg_mask_map_train
+        n_samples = sum(mask)
+        
+        if n_samples < min_samples
+            # Equal weight 설정
+            equal_coefs = [(Symbol(fname), equal_weight) for fname in feature_names]
+            rg_coef_map[regime_combo] = (coefs = equal_coefs, intercept = 0.0)
+            is_print && println("Regime $regime_combo: Equal weight ($(n_samples) samples)")
+            
+        else
+            # 선형회귀
+            df_filtered = df_evv_train[mask, :]
+            ret_filtered = ret_bp_train[mask]
+            rg_coef_map[regime_combo] = get_lr_coef(df_filtered, ret_filtered)
+            is_print && println("Regime $regime_combo: Regression ($(n_samples) samples)")
+        end
+    end
+    
+    return rg_coef_map
+end
+
+
+function calc_regime_based_er_vec(rg_info_map, df_evv, mask_symbol; default_value=NaN)
+    n_rows = size(df_evv, 1)
+    er_vec = fill(default_value, n_rows)
+    
+    # 각 regime별로 계수 적용
+    for (regime_idx, rg_info) in rg_info_map
+        mask = rg_info[Symbol(mask_symbol)]
+        coef = rg_info.coef
+        
+        if sum(mask) == 0
+            continue  # 해당 regime에 데이터가 없으면 건너뛰기
+        end
+        
+        # 해당 regime 데이터에 대해 prediction 계산
+        prediction = fill(coef.intercept, sum(mask))
+        df_regime = df_evv[mask, :]
+        
+        for (ft_name, coef_val) in coef.coefs
+            prediction .+= df_regime[!, ft_name] .* coef_val
+        end
+        
+        # 결과 벡터에 할당
+        er_vec[mask] = prediction
+    end
+    
+    return er_vec
+end
+
+
+function calc_multi_regime_based_er_vec(rg_info_map, df_evv, mask_symbol; default_value=NaN)
+    n_rows = size(df_evv, 1)
+    er_vec = fill(default_value, n_rows)
+
+    # 각 regime별로 계수 적용
+    for (regime_idx, rg_info) in rg_info_map
+        mask = rg_info[Symbol(mask_symbol)]
+        coef = rg_info.coef
+        
+        if sum(mask) == 0
+            continue  # 해당 regime에 데이터가 없으면 건너뛰기
+        end
+        
+        # 해당 regime 데이터에 대해 prediction 계산
+        prediction = fill(coef.intercept, sum(mask))
+        df_regime = df_evv[mask, :]
+        
+        for (ft_name, coef_val) in coef.coefs
+            if occursin("_weight_sum", string(ft_name)) continue end
+            for sb in symbols
+                prediction .+= df_regime[!, "$(sb)__$(ft_name)"] .* coef_val
+            end
+        end
+        
+        # 결과 벡터에 할당
+        er_vec[mask] = prediction
+    end
+    return er_vec
+end
+
+
+function get_rg_info_map(regime_ft_gen_map, df_train, df_test, df_evv_train)
+    ft_name_vec::Vector{String} = []
+    rv_train::Vector{Vector{Int64}} = []
+    rv_test::Vector{Vector{Int64}} = []
+    for (ft_name, (generator, rg_th_vec)) in regime_ft_gen_map
+        println(ft_name, "  ", generator, "  ", rg_th_vec)
+        ft_train = generator(df_train)
+        ft_test = generator(df_test)
+        regime_th_values = get_regime_th_values_by_quantile_th(ft_train, rg_th_vec)
+        regime_vec_train = get_regime_vec_by_th_values(ft_train, regime_th_values)
+        regime_vec_test = get_regime_vec_by_th_values(ft_test, regime_th_values)
+        push!(ft_name_vec, ft_name)
+        push!(rv_train, regime_vec_train)
+        push!(rv_test, regime_vec_test)
+    end
+
+    unique_values = [sort(unique(rv)) for rv in rv_train]
+    all_combined_regime = get_all_combinations(unique_values)
+    rg_mask_map_train = get_all_regime_masks(rv_train, all_combined_regime)
+    rg_mask_map_test = get_all_regime_masks(rv_test, all_combined_regime)
+
+    rg_coef_map = get_regime_coef_map(df_evv_train, df_train.ret_bp, rg_mask_map_train; min_samples=100)
+
+    rg_info_map = SortedDict()
+    for (regime_idx, comb_regime) in enumerate(all_combined_regime)
+        mask_train = rg_mask_map_train[comb_regime]
+        mask_test = rg_mask_map_test[comb_regime]
+        coef = rg_coef_map[comb_regime]
+        rg_info_map[regime_idx] = (; mask_train, mask_test, coef, comb_regime)
+    end
+    return rg_info_map
+end
+
+
+
+function get_multi_rg_info_map(regime_ft_gen_map, df_train, df_test, df_evv_train)
+    ft_name_vec::Vector{String} = []
+    rv_train::Vector{Vector{Int64}} = []
+    rv_test::Vector{Vector{Int64}} = []
+    for (ft_name, (generator, rg_th_vec)) in regime_ft_gen_map
+        println(ft_name, "  ", generator, "  ", rg_th_vec)
+        ft_train = generator(df_train)
+        ft_test = generator(df_test)
+        regime_th_values = get_regime_th_values_by_quantile_th(ft_train, rg_th_vec)
+        regime_vec_train = get_regime_vec_by_th_values(ft_train, regime_th_values)
+        regime_vec_test = get_regime_vec_by_th_values(ft_test, regime_th_values)
+        push!(ft_name_vec, ft_name)
+        push!(rv_train, regime_vec_train)
+        push!(rv_test, regime_vec_test)
+    end
+
+    unique_values = [sort(unique(rv)) for rv in rv_train]
+    all_combined_regime = get_all_combinations(unique_values)
+    rg_mask_map_train = get_all_regime_masks(rv_train, all_combined_regime)
+    rg_mask_map_test = get_all_regime_masks(rv_test, all_combined_regime)
+
+    rg_coef_map = get_regime_coef_map(df_evv_train, df_train.ret_bp, rg_mask_map_train; min_samples=100)
+
+    rg_info_map = SortedDict()
+    for (regime_idx, comb_regime) in enumerate(all_combined_regime)
+        mask_train = rg_mask_map_train[comb_regime]
+        mask_test = rg_mask_map_test[comb_regime]
+        coef = rg_coef_map[comb_regime]
+        rg_info_map[regime_idx] = (; mask_train, mask_test, coef, comb_regime)
+    end
+    return rg_info_map
+end
 
 
 
