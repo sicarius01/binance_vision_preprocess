@@ -1651,7 +1651,7 @@ function summary_evv_result(df_evv_train, df_evv_test, ft_names, th)
 end
 
 
-function view_norm_ret_path_by_df_evv(th, df_evv_train, df_evv_test; er_name="equal_weight_sum")
+function view_norm_ret_path_by_df_evv(th, df_evv_train, df_evv_test, df_train, df_test; er_name="equal_weight_sum")
     sl_train, ss_train = get_signals(df_evv_train[!, er_name], th)
     plt_train, tr_res_vec_train = backtest_sica_2(sl_train, ss_train, df_train.WAP_Lag_200ms, df_train.WAP_Lag_0ms, df_train.timestamp, is_print=false)
     er_bp_train = mean(10_000 * tr[6] / tr[4] for tr in tr_res_vec_train)
@@ -1988,6 +1988,11 @@ function get_multi_rg_info_map(regime_ft_gen_map, df_train, df_test, df_evv_trai
     return rg_info_map
 end
 
+
+function calc_avg_ret_bp(tr_res_vec)
+    profit_bp_vec = [10_000 * tr[6] / tr[4] for tr in tr_res_vec]
+    return round(mean(profit_bp_vec), digits=4)
+end
 
 
 

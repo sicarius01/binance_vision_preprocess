@@ -11,7 +11,9 @@ begin
         [string(di) for di in 20230401:20230430];
         [string(di) for di in 20230501:20230531]
         ]
-    df_list = [get_df_oneday_full(tardis_dir, s7_dir, symbol, date_one_day, features) for date_one_day in date_list_train]
+    # df_list = [get_df_oneday_full(tardis_dir, s7_dir, symbol, date_one_day, features) for date_one_day in date_list_train]
+    df_list = [Threads.@spawn get_df_oneday_full(tardis_dir, s7_dir, symbol, date, features) for date in date_list_train]
+    df_list = fetch.(df_list)
     df_train = vcat(df_list...)
     set_ret_bp(df_train, ret_interval)
 end
@@ -21,8 +23,9 @@ begin
         [string(di) for di in 20230525:20230531];
         [string(di) for di in 20230601:20230630]
         ]
-
-    df_list2 = [get_df_oneday_full(tardis_dir, s7_dir, symbol, date_one_day, features) for date_one_day in date_list_test]
+    # df_list2 = [get_df_oneday_full(tardis_dir, s7_dir, symbol, date_one_day, features) for date_one_day in date_list_test]
+    df_list2 = [Threads.@spawn get_df_oneday_full(tardis_dir, s7_dir, symbol, date, features) for date in date_list_test]
+    df_list2 = fetch.(df_list2)
     df_test = vcat(df_list2...)
     set_ret_bp(df_test, ret_interval)
 end
@@ -62,41 +65,60 @@ end
 # end
 
 
-th = 0.1
-th = 0.33333
+# th = 0.05
+# th = 0.1
+# th = 0.33333
+# th = 0.5
+# th = 1.0
+# th = 5.0
+thv = [0.05, 0.1, 0.33333, 0.5, 1.0, 5.0]
+avg_ret_train, avg_ret_test = [], []
+for th in thv
+    begin
+        println("Train")
+        sl_train, ss_train = get_signals(df_evv_train[!, "equal_weight_sum"], th)
+        plt_train_eq, tr_res_vec_train_eq = backtest_sica_2(sl_train, ss_train, df_train.WAP_Lag_200ms, df_train.WAP_Lag_0ms, df_train.timestamp, is_display=false)
+        println("----------")
+        sl_train, ss_train = get_signals(df_evv_train[!, "lin_reg_weight_sum"], th)
+        plt_train_lr, tr_res_vec_train_lr = backtest_sica_2(sl_train, ss_train, df_train.WAP_Lag_200ms, df_train.WAP_Lag_0ms, df_train.timestamp, is_display=false)
+        println("----------")
+        sl_train, ss_train = get_signals(df_evv_train[!, "regime_weight_sum"], th)
+        plt_train_rg, tr_res_vec_train_rg = backtest_sica_2(sl_train, ss_train, df_train.WAP_Lag_200ms, df_train.WAP_Lag_0ms, df_train.timestamp, is_display=false)
+        final_plt_train = plot(plt_train_eq, plt_train_lr, plt_train_rg, layout=(3, 1), plot_title="Train - th: $th", size=(900, 900))
+        savefig(final_plt_train, "./fig/$(symbol)_backtest_th($(th))_train.png")
+        push!(avg_ret_train, calc_avg_ret_bp.([tr_res_vec_train_eq, tr_res_vec_train_lr, tr_res_vec_train_rg]))
+    end
 
-begin
-    println("Train")
-    sl_train, ss_train = get_signals(df_evv_train[!, "equal_weight_sum"], th)
-    plt_train_eq, tr_res_vec_train_eq = backtest_sica_2(sl_train, ss_train, df_train.WAP_Lag_200ms, df_train.WAP_Lag_0ms, df_train.timestamp, is_display=false)
-    println("----------")
-    sl_train, ss_train = get_signals(df_evv_train[!, "lin_reg_weight_sum"], th)
-    plt_train_lr, tr_res_vec_train_lr = backtest_sica_2(sl_train, ss_train, df_train.WAP_Lag_200ms, df_train.WAP_Lag_0ms, df_train.timestamp, is_display=false)
-    println("----------")
-    sl_train, ss_train = get_signals(df_evv_train[!, "regime_weight_sum"], th)
-    plt_train_rg, tr_res_vec_train_rg = backtest_sica_2(sl_train, ss_train, df_train.WAP_Lag_200ms, df_train.WAP_Lag_0ms, df_train.timestamp, is_display=false)
-    final_plt_train = plot(plt_train_eq, plt_train_lr, plt_train_rg, layout=(3, 1), plot_title="Train - th: $th", size=(900, 900))
+    begin
+        println("Test")
+        sl_test, ss_test = get_signals(df_evv_test[!, "equal_weight_sum"], th)
+        plt_test_eq, tr_res_vec_test_eq = backtest_sica_2(sl_test, ss_test, df_test.WAP_Lag_200ms, df_test.WAP_Lag_0ms, df_test.timestamp, is_display=false)    
+        println("----------")
+        sl_test, ss_test = get_signals(df_evv_test[!, "lin_reg_weight_sum"], th)
+        plt_test_lr, tr_res_vec_test_lr = backtest_sica_2(sl_test, ss_test, df_test.WAP_Lag_200ms, df_test.WAP_Lag_0ms, df_test.timestamp, is_display=false)  
+        println("----------")
+        sl_test, ss_test = get_signals(df_evv_test[!, "regime_weight_sum"], th)
+        plt_test_rg, tr_res_vec_test_rg = backtest_sica_2(sl_test, ss_test, df_test.WAP_Lag_200ms, df_test.WAP_Lag_0ms, df_test.timestamp, is_display=false)
+        final_plt_test = plot(plt_test_eq, plt_test_lr, plt_test_rg, layout=(3, 1), plot_title="Test - th: $th", size=(900, 1200))
+        savefig(final_plt_test, "./fig/$(symbol)_backtest_th($(th))_test.png")
+        push!(avg_ret_test, calc_avg_ret_bp.([tr_res_vec_test_eq, tr_res_vec_test_lr, tr_res_vec_test_rg]))
+    end
 end
 
-begin
-    println("Test")
-    sl_test, ss_test = get_signals(df_evv_test[!, "equal_weight_sum"], th)
-    plt_test_eq, tr_res_vec_test_eq = backtest_sica_2(sl_test, ss_test, df_test.WAP_Lag_200ms, df_test.WAP_Lag_0ms, df_test.timestamp, is_display=false)    
-    println("----------")
-    sl_test, ss_test = get_signals(df_evv_test[!, "lin_reg_weight_sum"], th)
-    plt_test_lr, tr_res_vec_test_lr = backtest_sica_2(sl_test, ss_test, df_test.WAP_Lag_200ms, df_test.WAP_Lag_0ms, df_test.timestamp, is_display=false)  
-    println("----------")
-    sl_test, ss_test = get_signals(df_evv_test[!, "regime_weight_sum"], th)
-    plt_test_rg, tr_res_vec_test_rg = backtest_sica_2(sl_test, ss_test, df_test.WAP_Lag_200ms, df_test.WAP_Lag_0ms, df_test.timestamp, is_display=false)
-    final_plt_test = plot(plt_test_eq, plt_test_lr, plt_test_rg, layout=(3, 1), plot_title="Test - th: $th", size=(900, 1200))
-end
+plt_avg_ret = plot(thv, [art[1] for art in avg_ret_train], label="train_eq", color=:purple)
+plot!(plt_avg_ret, thv, [art[2] for art in avg_ret_train], label="train_lr", color=:orange)
+plot!(plt_avg_ret, thv, [art[3] for art in avg_ret_train], label="train_rg", color=:red)
+plot!(plt_avg_ret, thv, [art[1] for art in avg_ret_test], label="test_eq", color=:green)
+plot!(plt_avg_ret, thv, [art[2] for art in avg_ret_test], label="test_lr", color=:blue)
+plot!(plt_avg_ret, thv, [art[3] for art in avg_ret_test], label="test_rg", color=:black)
+savefig(plt_avg_ret, "./fig/$(symbol)_backtest_th_vs_ret_bp.png")
 
 
 
-
+th = 0.5
 begin
     er_name = "equal_weight_sum"
-    plt_norm_ret_eq = view_norm_ret_path_by_df_evv(th, df_evv_train, df_evv_test, er_name=er_name)
+    plt_norm_ret_eq = view_norm_ret_path_by_df_evv(th, df_evv_train, df_evv_test, df_train, df_test, er_name=er_name)
     tr_res_vec_train_eq, tr_res_vec_test_eq = get_tr_res_vecs_by_dfs(th, df_train, df_evv_train, df_test, df_evv_test, er_name)
     plt_total_train_eq = get_plt_total_by_tr_res_vec(tr_res_vec_train_eq, "Train", df_evv_train[!, er_name], df_train[!, "WAP_Lag_0ms"], win)
     plt_total_test_eq = get_plt_total_by_tr_res_vec(tr_res_vec_test_eq, "Test", df_evv_test[!, er_name], df_test[!, "WAP_Lag_0ms"], win)
@@ -105,7 +127,7 @@ end
 
 begin
     er_name = "lin_reg_weight_sum"
-    plt_norm_ret_lr = view_norm_ret_path_by_df_evv(th, df_evv_train, df_evv_test, er_name=er_name)
+    plt_norm_ret_lr = view_norm_ret_path_by_df_evv(th, df_evv_train, df_evv_test, df_train, df_test, er_name=er_name)
     tr_res_vec_train_lr, tr_res_vec_test_lr = get_tr_res_vecs_by_dfs(th, df_train, df_evv_train, df_test, df_evv_test, er_name)
     plt_total_train_lr = get_plt_total_by_tr_res_vec(tr_res_vec_train_lr, "Train", df_evv_train[!, er_name], df_train[!, "WAP_Lag_0ms"], win)
     plt_total_test_lr = get_plt_total_by_tr_res_vec(tr_res_vec_test_lr, "Test", df_evv_test[!, er_name], df_test[!, "WAP_Lag_0ms"], win)
@@ -114,7 +136,7 @@ end
 
 begin
     er_name = "regime_weight_sum"
-    plt_norm_ret_rg = view_norm_ret_path_by_df_evv(th, df_evv_train, df_evv_test, er_name=er_name)
+    plt_norm_ret_rg = view_norm_ret_path_by_df_evv(th, df_evv_train, df_evv_test, df_train, df_test, er_name=er_name)
     tr_res_vec_train_rg, tr_res_vec_test_rg = get_tr_res_vecs_by_dfs(th, df_train, df_evv_train, df_test, df_evv_test, er_name)
     plt_total_train_rg = get_plt_total_by_tr_res_vec(tr_res_vec_train_rg, "Train", df_evv_train[!, er_name], df_train[!, "WAP_Lag_0ms"], win)
     plt_total_test_rg = get_plt_total_by_tr_res_vec(tr_res_vec_test_rg, "Test", df_evv_test[!, er_name], df_test[!, "WAP_Lag_0ms"], win)
@@ -123,11 +145,12 @@ end
 
 
 plt_3_norm_ret_bp = plot(plt_norm_ret_eq, plt_norm_ret_lr, plt_norm_ret_rg, layout=(1, 3), size=(900, 600))
+savefig(plt_3_norm_ret_bp, "./fig/$(symbol)_3_norm_ret_bp_th($(th)).png")
 
 
 plt_3_at_time = plot(plt_eq, plt_lr, plt_rg, layout=(1, 3), size=(1800, 900))
 # display(plt_3_at_time)
-savefig(plt_3_at_time, "./fig/plt_3_at_time.png")
+savefig(plt_3_at_time, "./fig/$(symbol)_plt_3_at_timeth($(th)).png")
 
 
 si_train = [i for i in 1:500:size(df_evv_train, 1)]
@@ -161,7 +184,8 @@ begin
     xlabel!(ppp, "Position Period (time units)")
     ylabel!(ppp, "Frequency")
     xlims!(ppp, (-5, 70))
-    display(ppp)
+    # display(ppp)
+    savefig(ppp, "./fig/$(symbol)_position_period_hist.png")
 end
 
 

@@ -62,7 +62,7 @@ th = 0.1
 th = 0.5
 th = 1.0
 
-plt_norm_ret = view_norm_ret_path_by_df_evv(th, df_evv_train, df_evv_test)
+plt_norm_ret = view_norm_ret_path_by_df_evv(th, df_evv_train, df_evv_test, df_train, df_test)
 tr_res_vec_train, tr_res_vec_test = get_tr_res_vecs_by_dfs(th, df_train, df_evv_train, df_test, df_evv_test)
 
 plt_total_train = get_plt_total_by_tr_res_vec(tr_res_vec_train, "Train", df_evv_train[!, "equal_weight_sum"], df_train[!, "WAP_Lag_0ms"], win)

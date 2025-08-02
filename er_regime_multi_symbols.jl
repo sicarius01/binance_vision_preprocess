@@ -110,6 +110,7 @@ th = 0.1
 th = 0.33333
 th = 0.5
 th = 1.0
+th = 5.0
 
 
 begin
@@ -137,11 +138,12 @@ end
 # 상위 10개 피쳐만 사용해서 다시 해보자
 
 use_features = [
+    "BTCUSDT__ofi", "BTCUSDT__tv", "BTCUSDT__liquidation", "BTCUSDT__mark_dist", "BTCUSDT__index_dist", "BTCUSDT__tor", "BTCUSDT__aq", "BTCUSDT__vwap",
     "SOLUSDT__vwap",
     "SOLUSDT__mark_dist",
     "SOLUSDT__liquidation",
-    "BTCUSDT__liquidation",
-    "BTCUSDT__ofi",
+    # "BTCUSDT__liquidation",
+    # "BTCUSDT__ofi",
     "DOGEUSDT__tor",
     "XRPUSDT__tor",
     "ETHUSDT__aq",
@@ -153,11 +155,54 @@ use_features = [
 df_evv_train_filtered = df_evv_train_multi_sb[:, use_features]
 df_evv_test_filtered = df_evv_test_multi_sb[:, use_features]
 
-rg_info_map = get_rg_info_map(regime_ft_gen_map, df_train_map[target_symbol], df_test_map[target_symbol], df_evv_train_multi_sb)
+rg_info_map = get_rg_info_map(regime_ft_gen_map, df_train_map[target_symbol], df_test_map[target_symbol], df_evv_train_filtered)
 
-df_evv_train_multi_sb[!, "multi_regime_weight_sum"] = calc_multi_regime_based_er_vec(rg_info_map, df_evv_train_multi_sb, "mask_train")
-df_evv_test_multi_sb[!, "multi_regime_weight_sum"] = calc_multi_regime_based_er_vec(rg_info_map, df_evv_test_multi_sb, "mask_test")
+df_evv_train_multi_sb[!, "multi_regime_10_weight_sum"] = calc_multi_regime_based_er_vec(rg_info_map, df_evv_train_filtered, "mask_train")
+df_evv_test_multi_sb[!, "multi_regime_10_weight_sum"] = calc_multi_regime_based_er_vec(rg_info_map, df_evv_test_filtered, "mask_test")
 
+
+th = 0.05
+th = 0.1
+th = 0.33333
+th = 0.5
+th = 1.0
+th = 5.0
+
+
+begin
+    println("Train")
+    println("----------")
+    sl_train, ss_train = get_signals(df_evv_train_multi_sb[!, "multi_regime_weight_sum"], th)
+    plt_train_mrg, tr_res_vec_train_mrg = backtest_sica_2(sl_train, ss_train, df_train_map[target_symbol].WAP_Lag_200ms, df_train_map[target_symbol].WAP_Lag_0ms, df_train_map[target_symbol].timestamp, is_display=false)
+    
+    println("----------")
+    sl_train, ss_train = get_signals(df_evv_train_multi_sb[!, "multi_regime_10_weight_sum"], th)
+    plt_train_mrg_10, tr_res_vec_train_mrg_10 = backtest_sica_2(sl_train, ss_train, df_train_map[target_symbol].WAP_Lag_200ms, df_train_map[target_symbol].WAP_Lag_0ms, df_train_map[target_symbol].timestamp, is_display=false)
+    # display(plt_train_mrg)
+    final_plt_train = plot(plt_train_mrg, plt_train_mrg_10, layout=(2, 1), plot_title="Train - th: $th", size=(900, 900))
+end
+
+
+begin
+    println("Test")
+    println("----------")
+    sl_test, ss_test = get_signals(df_evv_test_multi_sb[!, "multi_regime_weight_sum"], th)
+    plt_test_mrg, tr_res_vec_test_mrg = backtest_sica_2(sl_test, ss_test, df_test_map[target_symbol].WAP_Lag_200ms, df_test_map[target_symbol].WAP_Lag_0ms, df_test_map[target_symbol].timestamp, is_display=false)
+    
+    println("----------")
+    sl_test, ss_test = get_signals(df_evv_test_multi_sb[!, "multi_regime_10_weight_sum"], th)
+    plt_test_mrg_10, tr_res_vec_test_mrg_10 = backtest_sica_2(sl_test, ss_test, df_test_map[target_symbol].WAP_Lag_200ms, df_test_map[target_symbol].WAP_Lag_0ms, df_test_map[target_symbol].timestamp, is_display=false)
+    # display(plt_test_mrg)
+    final_plt_test = plot(plt_test_mrg, plt_test_mrg_10, layout=(2, 1), plot_title="Test - th: $th", size=(900, 900))
+end
+
+
+
+# 결론
+# 48개 피쳐가 직교는 한다.
+# 근데 합치면 성과가 영 별로임 
+# 그냥 1개 종목에서 8개 뽑은걸로 쓰자 
+# 1개 종목에서 다 잘 통하는지나 한번 보자.... 
 
 
 
