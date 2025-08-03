@@ -78,6 +78,7 @@ end
 function simple_view_feature_power_return(
     X, target;
     title::Union{Nothing, String}=nothing,
+    is_display=true,
     )
     println("")
     px = [1, 2, 3, 5, 10, 25, 50, 75, 90, 95, 99]
@@ -95,7 +96,7 @@ function simple_view_feature_power_return(
     if title !== nothing
         title!(title)
     end
-    display(p)
+    is_display && display(p)
     return py_l, py_h
 end
 

@@ -44,6 +44,11 @@ end
 
 ############################################################
 
+thv = [0.05, 0.1, 0.33333, 0.5, 1.0]
+
+all_symbol_plot_train = Dict(th => Dict() for th in thv)
+all_symbol_plot_test = Dict(th => Dict() for th in thv)
+
 for target_symbol in symbols
 println("target_symbol: $(target_symbol)")
 begin
@@ -51,8 +56,8 @@ begin
     # target_symbol = "ADAUSDT"
     win = 300
     ret_col_name = "ret_bp"
-    th_vec = [(0.1:0.1:0.9); Float64.(1:99); (99.1:0.1:99.9)]    
-    # th_vec = [0.01, 0.03, 0.06, 0.10, 0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90, 0.94, 0.97, 0.99] .* 100
+    # th_vec = [(0.1:0.1:0.9); Float64.(1:99); (99.1:0.1:99.9)]    
+    th_vec = [0.01, 0.03, 0.06, 0.10, 0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90, 0.94, 0.97, 0.99] .* 100
 end
 
 begin    
@@ -115,24 +120,26 @@ df_evv_test_multi_sb[!, "multi_regime_weight_sum"] = calc_multi_regime_based_er_
 
 
 
-thv = [0.05, 0.1, 0.33333, 0.5, 1.0]
+
 for th in thv
     begin
         println("Train")
         println("----------")
         sl_train, ss_train = get_signals(df_evv_train_multi_sb[!, "multi_equal_weight_sum"], th)
-        plt_train_meq, tr_res_vec_train_meq = backtest_sica_2(sl_train, ss_train, df_train_map[target_symbol].WAP_Lag_200ms, df_train_map[target_symbol].WAP_Lag_0ms, df_train_map[target_symbol].timestamp, is_display=false)
+        plt_train_meq, tr_res_vec_train_meq = backtest_sica_2(sl_train, ss_train, df_train_map[target_symbol].WAP_Lag_200ms, df_train_map[target_symbol].WAP_Lag_0ms, df_train_map[target_symbol].timestamp, is_display=false, name=target_symbol)
         
         println("----------")
         sl_train, ss_train = get_signals(df_evv_train_multi_sb[!, "multi_lin_reg_weight_sum"], th)
-        plt_train_mlr, tr_res_vec_train_mlr = backtest_sica_2(sl_train, ss_train, df_train_map[target_symbol].WAP_Lag_200ms, df_train_map[target_symbol].WAP_Lag_0ms, df_train_map[target_symbol].timestamp, is_display=false)
+        plt_train_mlr, tr_res_vec_train_mlr = backtest_sica_2(sl_train, ss_train, df_train_map[target_symbol].WAP_Lag_200ms, df_train_map[target_symbol].WAP_Lag_0ms, df_train_map[target_symbol].timestamp, is_display=false, name=target_symbol)
         
         println("----------")
         sl_train, ss_train = get_signals(df_evv_train_multi_sb[!, "multi_regime_weight_sum"], th)
-        plt_train_mrg, tr_res_vec_train_mrg = backtest_sica_2(sl_train, ss_train, df_train_map[target_symbol].WAP_Lag_200ms, df_train_map[target_symbol].WAP_Lag_0ms, df_train_map[target_symbol].timestamp, is_display=false)
+        plt_train_mrg, tr_res_vec_train_mrg = backtest_sica_2(sl_train, ss_train, df_train_map[target_symbol].WAP_Lag_200ms, df_train_map[target_symbol].WAP_Lag_0ms, df_train_map[target_symbol].timestamp, is_display=false, name=target_symbol)
               
-        final_plt_train = plot(plt_train_meq, plt_train_mlr, plt_train_mrg, layout=(3, 1), plot_title="[$(target_symbol)] Multi Symbol Train - th: $th", size=(900, 900))        
-        savefig(final_plt_train, "./fig/multi_symbol_BT/$(target_symbol)__multi_symbol_BT_th($(th))_train.png")
+        # final_plt_train = plot(plt_train_meq, plt_train_mlr, plt_train_mrg, layout=(3, 1), plot_title="[$(target_symbol)] Multi Symbol Train - th: $th", size=(900, 900))        
+        # savefig(final_plt_train, "./fig/multi_symbol_BT_less_table/$(target_symbol)__multi_symbol_BT_th($(th))_train.png")
+
+        all_symbol_plot_train[th][target_symbol] = plt_train_mlr
     end
 
 
@@ -140,26 +147,42 @@ for th in thv
         println("Test")
         println("----------")
         sl_test, ss_test = get_signals(df_evv_test_multi_sb[!, "multi_equal_weight_sum"], th)
-        plt_test_meq, tr_res_vec_test_meq = backtest_sica_2(sl_test, ss_test, df_test_map[target_symbol].WAP_Lag_200ms, df_test_map[target_symbol].WAP_Lag_0ms, df_test_map[target_symbol].timestamp, is_display=false)
+        plt_test_meq, tr_res_vec_test_meq = backtest_sica_2(sl_test, ss_test, df_test_map[target_symbol].WAP_Lag_200ms, df_test_map[target_symbol].WAP_Lag_0ms, df_test_map[target_symbol].timestamp, is_display=false, name=target_symbol)
         
         println("----------")
         sl_test, ss_test = get_signals(df_evv_test_multi_sb[!, "multi_lin_reg_weight_sum"], th)
-        plt_test_mlr, tr_res_vec_test_mlr = backtest_sica_2(sl_test, ss_test, df_test_map[target_symbol].WAP_Lag_200ms, df_test_map[target_symbol].WAP_Lag_0ms, df_test_map[target_symbol].timestamp, is_display=false)
+        plt_test_mlr, tr_res_vec_test_mlr = backtest_sica_2(sl_test, ss_test, df_test_map[target_symbol].WAP_Lag_200ms, df_test_map[target_symbol].WAP_Lag_0ms, df_test_map[target_symbol].timestamp, is_display=false, name=target_symbol)
         
         println("----------")
         sl_test, ss_test = get_signals(df_evv_test_multi_sb[!, "multi_regime_weight_sum"], th)
-        plt_test_mrg, tr_res_vec_test_mrg = backtest_sica_2(sl_test, ss_test, df_test_map[target_symbol].WAP_Lag_200ms, df_test_map[target_symbol].WAP_Lag_0ms, df_test_map[target_symbol].timestamp, is_display=false)
+        plt_test_mrg, tr_res_vec_test_mrg = backtest_sica_2(sl_test, ss_test, df_test_map[target_symbol].WAP_Lag_200ms, df_test_map[target_symbol].WAP_Lag_0ms, df_test_map[target_symbol].timestamp, is_display=false, name=target_symbol)
         
-        final_plt_test = plot(plt_test_meq, plt_test_mlr, plt_test_mrg, layout=(3, 1), plot_title="[$(target_symbol)] Multi Symbol Test - th: $th", size=(900, 900))        
-        savefig(final_plt_test, "./fig/multi_symbol_BT/$(target_symbol)__multi_symbol_BT_th($(th))_test.png")
+        # final_plt_test = plot(plt_test_meq, plt_test_mlr, plt_test_mrg, layout=(3, 1), plot_title="[$(target_symbol)] Multi Symbol Test - th: $th", size=(900, 900))        
+        # savefig(final_plt_test, "./fig/multi_symbol_BT_less_table/$(target_symbol)__multi_symbol_BT_th($(th))_test.png")
+
+        all_symbol_plot_test[th][target_symbol] = plt_test_mlr
     end
 end
 
 end     # symbols로 target_symbol 돌리는 for loop
 
 
+all_symbol_plot_train = plot(title="Multi Symbol Linear Regression")
 
-# TODO
+
+for th in thv
+    symbols_plot_train = plot([all_symbol_plot_train[th][sb] for sb in symbols]..., layout=(3, 2), plot_title="Multi Symbol Lin Reg th: $(th) [Train]", size=(2000, 1800))
+    savefig(symbols_plot_train, "./fig/summary/multi_symbol_lin_reg_train_th($(th)).png")
+
+    symbols_plot_test = plot([all_symbol_plot_test[th][sb] for sb in symbols]..., layout=(3, 2), plot_title="Multi Symbol Lin Reg th: $(th) [Test]", size=(2000, 1800))
+    savefig(symbols_plot_test, "./fig/summary/multi_symbol_lin_reg_test_th($(th)).png")
+
+end
+
+
+
+
+# 투두 완료
 # 1. 48개 피쳐 equal weight, lr 해서 비교
 # 2. 심볼 별로 피쳐 깎아서 해보기
 
