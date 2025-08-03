@@ -1536,11 +1536,11 @@ function get_evv_df(ft_gen_map, ret_col_name, th_vec)
 end
 
 
-function get_evv_df_fast(ft_gen_map, ret_col_name, th_vec)
+function get_evv_df_fast(df_train, df_test, ft_gen_map, ret_bp, th_vec)
     ft_tasks = [Threads.@spawn (ft_name, ft_generator(df_train), ft_generator(df_test)) for (ft_name, ft_generator) in ft_gen_map]
     ft_map = Dict(task_result[1] => (task_result[2], task_result[3]) for task_result in fetch.(ft_tasks))
 
-    ret_bp = df_train[!, ret_col_name]
+    # ret_bp = df_train[!, ret_col_name]
     tb_info_tasks = [Threads.@spawn (ft_name, get_ev_info(ft_tuple[1], ret_bp, th_vec)) for (ft_name, ft_tuple) in ft_map]
     tb_info_map = Dict(fetch(task)[1] => fetch(task)[2] for task in tb_info_tasks)
 
@@ -1561,13 +1561,34 @@ end
 
 function get_evv_df_fast2(df_train, df_test, ft_gen_map, ret_bp, th_vec; is_calc_lr=true)
     # ret_bp = df_train[!, ret_col_name]
-    df_evv_train, df_evv_test = DataFrame(), DataFrame()
-    @threads for ft_name in collect(keys(ft_gen_map))
+    # df_evv_train, df_evv_test = DataFrame(), DataFrame()
+    # @threads for ft_name in collect(keys(ft_gen_map))
+    #     ft_train = ft_gen_map[ft_name](df_train)
+    #     ft_test = ft_gen_map[ft_name](df_test)
+    #     tb_info = get_ev_info(ft_train, ret_bp, th_vec)
+    #     df_evv_train[!, ft_name] = get_wsv_parallel(tb_info, ft_train)
+    #     df_evv_test[!, ft_name] = get_wsv_parallel(tb_info, ft_test)
+    # end
+
+    ft_names = collect(keys(ft_gen_map))
+    
+    # 병렬로 계산만 수행
+    results = Vector{Tuple{String, Vector{Float64}, Vector{Float64}}}(undef, length(ft_names))
+    @threads for i in 1:length(ft_names)
+        ft_name = ft_names[i]
         ft_train = ft_gen_map[ft_name](df_train)
         ft_test = ft_gen_map[ft_name](df_test)
         tb_info = get_ev_info(ft_train, ret_bp, th_vec)
-        df_evv_train[!, ft_name] = get_wsv_parallel(tb_info, ft_train)
-        df_evv_test[!, ft_name] = get_wsv_parallel(tb_info, ft_test)
+        evv_train = get_wsv_parallel(tb_info, ft_train)
+        evv_test = get_wsv_parallel(tb_info, ft_test)
+        results[i] = (ft_name, evv_train, evv_test)
+    end
+    
+    # DataFrame에 순차적으로 추가
+    df_evv_train, df_evv_test = DataFrame(), DataFrame()
+    for (ft_name, evv_train, evv_test) in results
+        df_evv_train[!, ft_name] = evv_train
+        df_evv_test[!, ft_name] = evv_test
     end
 
     # 모든 feature들의 동일가중 평균 계산
@@ -1585,6 +1606,15 @@ function calc_weighted_sum(df_train, df_evv_train, df_evv_test; res_col_name="li
     weights = Dict(cf[1] => cf[2] for cf in coef_lr_train.coefs)
     df_evv_train[!, res_col_name] = calc_linear_prediction(df_evv_train, weights, coef_lr_train.intercept)
     df_evv_test[!, res_col_name] = calc_linear_prediction(df_evv_test, weights, coef_lr_train.intercept)
+end
+
+
+function calc_weighted_sum_return(df_train, df_evv_train, df_evv_test)
+    coef_lr_train = get_lr_coef(df_evv_train, df_train.ret_bp)
+    weights = Dict(cf[1] => cf[2] for cf in coef_lr_train.coefs)
+    lin_reg_weight_sum_train = calc_linear_prediction(df_evv_train, weights, coef_lr_train.intercept)
+    lin_reg_weight_sum_test = calc_linear_prediction(df_evv_test, weights, coef_lr_train.intercept)
+    return lin_reg_weight_sum_train, lin_reg_weight_sum_test
 end
 
 
@@ -1994,6 +2024,16 @@ function calc_avg_ret_bp(tr_res_vec)
     return round(mean(profit_bp_vec), digits=4)
 end
 
+
+function get_multi_equal_weight_sum(df_evv_multi_sb)
+    multi_equal_weight_sum = fill(0.0, nrow(df_evv_multi_sb))
+    cols = [ft_name for ft_name in names(df_evv_multi_sb) if !occursin("weight_sum", ft_name) && ft_name !== "timestamp"]
+    ew = 1 / length(cols)
+    for ft_name in cols
+        multi_equal_weight_sum .+= (df_evv_multi_sb[!, ft_name]) ./ ew
+    end
+    return multi_equal_weight_sum
+end
 
 
 

@@ -29,7 +29,8 @@ end
 ################## from map
 
 ret_col_name = "ret_bp"
-th_vec = [(0.1:0.1:0.9); Float64.(1:99); (99.1:0.1:99.9)]
+# th_vec = [(0.1:0.1:0.9); Float64.(1:99); (99.1:0.1:99.9)]
+th_vec = [0.00, 0.01, 0.03, 0.06, 0.10, 0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90, 0.94, 0.97, 0.99, 1.00]
 
 begin
     println("--------------------------------------------\n")
@@ -121,13 +122,6 @@ plt_total_train = get_plt_total_by_tr_res_vec(tr_res_vec_train, "Train", yhat_lr
 plt_total_test = get_plt_total_by_tr_res_vec(tr_res_vec_test, "Test", yhat_lr_test, df_test[!, "WAP_Lag_0ms"], win)
 
 
-
-# 내일 할 일
-# 1. 레짐 나눠서 해보자 
-# 2. 심볼별로 확장 
-
-
-# 1. feature for regime divide (trade count, diff of open interest)
 
 
 
